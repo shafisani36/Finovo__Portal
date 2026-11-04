@@ -1,0 +1,33 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Finovo Global Brand Colors -->
+    <SolidColorBrush x:Key="FinovoPrimaryBrush" Color="#F95716" />
+    <SolidColorBrush x:Key="FinovoPrimaryHoverBrush" Color="#EA4C0B" />
+    <SolidColorBrush x:Key="FinovoDarkBrush" Color="#0F172A" />
+    <SolidColorBrush x:Key="FinovoSurfaceBrush" Color="#1E293B" />
+    <SolidColorBrush x:Key="FinovoBorderBrush" Color="#334155" />
+    <SolidColorBrush x:Key="FinovoTextMutedBrush" Color="#94A3B8" />
+    <SolidColorBrush x:Key="FinovoSuccessBrush" Color="#10B981" />
+    <SolidColorBrush x:Key="FinovoWarningBrush" Color="#F59E0B" />
+
+    <!-- Button Styles -->
+    <Style x:Key="FinovoPrimaryButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource FinovoPrimaryBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

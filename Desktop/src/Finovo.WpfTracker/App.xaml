@@ -1,0 +1,107 @@
+<Application x:Class="FinovoTracker.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <!-- Enterprise Dark Theme Colors -->
+        <Color x:Key="ColorBgDark">#090E1A</Color>
+        <Color x:Key="ColorCardBg">#0F182B</Color>
+        <Color x:Key="ColorCardBorder">#1E2C48</Color>
+        <Color x:Key="ColorInputBg">#0B1222</Color>
+        <Color x:Key="ColorInputBorder">#223250</Color>
+        <Color x:Key="ColorPrimary">#F95716</Color>
+        <Color x:Key="ColorPrimaryHover">#FF6A2C</Color>
+        <Color x:Key="ColorTextWhite">#FFFFFF</Color>
+        <Color x:Key="ColorTextMuted">#94A3B8</Color>
+        <Color x:Key="ColorTextDim">#64748B</Color>
+        <Color x:Key="ColorGreen">#10B981</Color>
+        <Color x:Key="ColorYellow">#F59E0B</Color>
+        <Color x:Key="ColorRed">#EF4444</Color>
+
+        <SolidColorBrush x:Key="BrushBgDark" Color="{StaticResource ColorBgDark}" />
+        <SolidColorBrush x:Key="BrushCardBg" Color="{StaticResource ColorCardBg}" />
+        <SolidColorBrush x:Key="BrushCardBorder" Color="{StaticResource ColorCardBorder}" />
+        <SolidColorBrush x:Key="BrushInputBg" Color="{StaticResource ColorInputBg}" />
+        <SolidColorBrush x:Key="BrushInputBorder" Color="{StaticResource ColorInputBorder}" />
+        <SolidColorBrush x:Key="BrushPrimary" Color="{StaticResource ColorPrimary}" />
+        <SolidColorBrush x:Key="BrushPrimaryHover" Color="{StaticResource ColorPrimaryHover}" />
+        <SolidColorBrush x:Key="BrushTextWhite" Color="{StaticResource ColorTextWhite}" />
+        <SolidColorBrush x:Key="BrushTextMuted" Color="{StaticResource ColorTextMuted}" />
+        <SolidColorBrush x:Key="BrushTextDim" Color="{StaticResource ColorTextDim}" />
+        <SolidColorBrush x:Key="BrushGreen" Color="{StaticResource ColorGreen}" />
+        <SolidColorBrush x:Key="BrushYellow" Color="{StaticResource ColorYellow}" />
+        <SolidColorBrush x:Key="BrushRed" Color="{StaticResource ColorRed}" />
+
+        <!-- Linear Gradient Brushes -->
+        <LinearGradientBrush x:Key="BrushPrimaryGradient" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#FF6428" Offset="0" />
+            <GradientStop Color="#F95716" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="BrushAvatarGradient" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#FF7A3D" Offset="0" />
+            <GradientStop Color="#F95716" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="BrushCardHeaderGlow" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#18233C" Offset="0" />
+            <GradientStop Color="#0F182B" Offset="0.4" />
+        </LinearGradientBrush>
+
+        <!-- Modern Button Style -->
+        <Style x:Key="PrimaryActionBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource BrushPrimaryGradient}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#FF7034" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#E0460A" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Window Control Button Style -->
+        <Style x:Key="WindowCtrlBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#94A3B8" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#223354" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Application.Resources>
+</Application>
+

@@ -1,0 +1,9 @@
+{
+  "application": "Finovo Time and Activity Tracker",
+  "version": "2.4.1",
+  "api_endpoint": "http://127.0.0.1:8000/api/v1",
+  "protocol": "finovo-v2",
+  "offline_storage": "sqlite-wal",
+  "telemetry": true,
+  "client_build": "release-win-x64-2026.11"
+}

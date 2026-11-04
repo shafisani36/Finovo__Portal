@@ -1,0 +1,86 @@
+<Window x:Class="Finovo.TimeTracker.Desktop.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Finovo Global — Time Tracker" Height="480" Width="400"
+        WindowStartupLocation="CenterScreen"
+        Background="#0F172A" Foreground="White"
+        ResizeMode="CanMinimize" FontFamily="Segoe UI">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Brand Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,24">
+            <TextBlock Text="FINOVO GLOBAL" Foreground="#F95716" FontWeight="Bold" FontSize="13" LetterSpacing="1.5" />
+            <TextBlock Text="Enterprise Desktop Time Tracker" Foreground="#94A3B8" FontSize="12" Margin="0,2,0,0" />
+        </StackPanel>
+
+        <!-- Main Timer Card -->
+        <Border Grid.Row="1" Background="#1E293B" CornerRadius="12" Padding="20" BorderBrush="#334155" BorderThickness="1">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <!-- Status Badge -->
+                <Border HorizontalAlignment="Center" CornerRadius="12" Background="#0F172A" Padding="12,4" Margin="0,0,0,16">
+                    <TextBlock Text="{Binding Timer.StatusDisplay}" Foreground="#10B981" FontWeight="SemiBold" FontSize="11" />
+                </Border>
+
+                <!-- Monotonic Elapsed Time Display -->
+                <TextBlock Text="{Binding Timer.FormattedTime}"
+                           Foreground="White"
+                           FontSize="44"
+                           FontWeight="Bold"
+                           FontFamily="Consolas"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,16" />
+
+                <!-- Current Task and Project -->
+                <TextBlock Text="{Binding Timer.TaskTitle}"
+                           Foreground="White"
+                           FontWeight="SemiBold"
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           MaxWidth="300"
+                           Margin="0,0,0,4" />
+
+                <TextBlock Text="{Binding Timer.ProjectName}"
+                           Foreground="#94A3B8"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,20" />
+
+                <!-- Action Controls -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <Button x:Name="BtnStart" Content="Start" Width="80" Margin="4"
+                            Style="{StaticResource FinovoPrimaryButtonStyle}"
+                            IsEnabled="{Binding Timer.CanStart}" Click="OnStartClicked" />
+
+                    <Button x:Name="BtnPause" Content="Pause" Width="80" Margin="4"
+                            Style="{StaticResource FinovoPrimaryButtonStyle}" Background="#334155"
+                            IsEnabled="{Binding Timer.CanPause}" Click="OnPauseClicked" />
+
+                    <Button x:Name="BtnResume" Content="Resume" Width="80" Margin="4"
+                            Style="{StaticResource FinovoPrimaryButtonStyle}"
+                            IsEnabled="{Binding Timer.CanResume}" Click="OnResumeClicked" />
+
+                    <Button x:Name="BtnStop" Content="Stop" Width="80" Margin="4"
+                            Style="{StaticResource FinovoPrimaryButtonStyle}" Background="#EF4444"
+                            IsEnabled="{Binding Timer.CanStop}" Click="OnStopClicked" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Offline & Sync Status Footer -->
+        <Border Grid.Row="3" Margin="0,16,0,0" Padding="8,4">
+            <DockPanel>
+                <Ellipse Width="8" Height="8" Fill="#10B981" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBlock Text="{Binding SyncStatusText}" Foreground="#94A3B8" FontSize="11" VerticalAlignment="Center" />
+                <TextBlock Text="v1.0.0 LTS" Foreground="#64748B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

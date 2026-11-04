@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Finovo.TimeTracker.Domain", "src\Finovo.TimeTracker.Domain\Finovo.TimeTracker.Domain.csproj", "{B8D8F7B5-87B6-4E87-8A7B-902B76D8059A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Finovo.TimeTracker.Application", "src\Finovo.TimeTracker.Application\Finovo.TimeTracker.Application.csproj", "{4B4D7FE3-6E7D-4F2E-9214-762C92DC65D7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Finovo.TimeTracker.Infrastructure", "src\Finovo.TimeTracker.Infrastructure\Finovo.TimeTracker.Infrastructure.csproj", "{5ACF333E-51BF-4F54-BAE7-DC1A8E2E6BE1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Finovo.TimeTracker.Desktop", "src\Finovo.TimeTracker.Desktop\Finovo.TimeTracker.Desktop.csproj", "{C0F80CD1-E547-4972-8EAA-28B0A8242A9E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Finovo.TimeTracker.UnitTests", "tests\Finovo.TimeTracker.UnitTests\Finovo.TimeTracker.UnitTests.csproj", "{059A8CF1-CD64-4CEF-B6E9-0B7CA5D5F9A1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B8D8F7B5-87B6-4E87-8A7B-902B76D8059A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8D8F7B5-87B6-4E87-8A7B-902B76D8059A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8D8F7B5-87B6-4E87-8A7B-902B76D8059A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8D8F7B5-87B6-4E87-8A7B-902B76D8059A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4B4D7FE3-6E7D-4F2E-9214-762C92DC65D7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4B4D7FE3-6E7D-4F2E-9214-762C92DC65D7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4B4D7FE3-6E7D-4F2E-9214-762C92DC65D7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4B4D7FE3-6E7D-4F2E-9214-762C92DC65D7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5ACF333E-51BF-4F54-BAE7-DC1A8E2E6BE1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5ACF333E-51BF-4F54-BAE7-DC1A8E2E6BE1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5ACF333E-51BF-4F54-BAE7-DC1A8E2E6BE1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5ACF333E-51BF-4F54-BAE7-DC1A8E2E6BE1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C0F80CD1-E547-4972-8EAA-28B0A8242A9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0F80CD1-E547-4972-8EAA-28B0A8242A9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0F80CD1-E547-4972-8EAA-28B0A8242A9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0F80CD1-E547-4972-8EAA-28B0A8242A9E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{059A8CF1-CD64-4CEF-B6E9-0B7CA5D5F9A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{059A8CF1-CD64-4CEF-B6E9-0B7CA5D5F9A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{059A8CF1-CD64-4CEF-B6E9-0B7CA5D5F9A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{059A8CF1-CD64-4CEF-B6E9-0B7CA5D5F9A1}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

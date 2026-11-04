@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+*/node_modules/
+vendor/
+*/vendor/
+
+# Environment files
+.env
+*/.env
+.env.backup
+.env.production
+*.env.*
+
+# Logs
+*.log
+*/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+*/dist/
+dist-ssr/
+public/build/
+public/hot/
+public/storage/
+
+# Desktop / .NET build outputs and temporary cache
+*.user
+*.suo
+*.userosv
+*.sln.docstates
+Desktop/src/*/obj/
+Desktop/src/*/bin/
+Desktop/tests/bin/
+Desktop/tests/obj/
+
+# Laravel storage cache/sessions
+Backend/storage/framework/cache/*
+!Backend/storage/framework/cache/.gitignore
+Backend/storage/framework/sessions/*
+!Backend/storage/framework/sessions/.gitignore
+Backend/storage/framework/views/*
+!Backend/storage/framework/views/.gitignore
+Backend/storage/logs/*
+!Backend/storage/logs/.gitignore
+Backend/storage/*.key
+
+# OS & IDE metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.fleet/
+.nova/
+.zed/

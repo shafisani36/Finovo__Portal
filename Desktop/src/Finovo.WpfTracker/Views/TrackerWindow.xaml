@@ -1,0 +1,303 @@
+<Window x:Class="FinovoTracker.Views.TrackerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Finovo Global — Enterprise Desktop Tracker"
+        Height="820" Width="460"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        FontFamily="Segoe UI"
+        ResizeMode="NoResize">
+
+    <Window.Resources>
+        <DropShadowEffect x:Key="ButtonGlow" BlurRadius="20" ShadowDepth="2" Color="#F95716" Opacity="0.35" />
+        <DropShadowEffect x:Key="CardShadow" BlurRadius="16" ShadowDepth="3" Color="#000000" Opacity="0.45" />
+
+        <!-- ComboBox Toggle Button Template -->
+        <ControlTemplate x:Key="ComboBoxToggleBtn" TargetType="ToggleButton">
+            <Border x:Name="border" CornerRadius="8" Background="#080E1C" BorderBrush="#223250" BorderThickness="1">
+                <Grid Margin="12,0,12,0">
+                    <Path HorizontalAlignment="Right" VerticalAlignment="Center" Fill="#94A3B8"
+                          Data="M7,10L12,15L17,10H7Z" Stretch="Uniform" Width="10" Height="8" />
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="border" Property="BorderBrush" Value="#384D74" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Custom Styled ComboBox -->
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Name="ToggleButton" Template="{StaticResource ComboBoxToggleBtn}"
+                                          Focusable="false" IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press" />
+                            <ContentPresenter Name="ContentSite" IsHitTestVisible="False" Margin="14,0,32,0"
+                                              VerticalAlignment="Center" HorizontalAlignment="Left"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" />
+                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}"
+                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border CornerRadius="8" Background="#0A1122" BorderBrush="#243352" BorderThickness="1"
+                                            Margin="0,4,0,4">
+                                        <ScrollViewer SnapsToDevicePixels="True">
+                                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ComboBox Item Style -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#CBD5E1" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="itemBorder" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="itemBorder" Property="Background" Value="#1E2E4E" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="itemBorder" Property="Background" Value="#253860" />
+                                <Setter Property="Foreground" Value="#F95716" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- Outer Window Frame -->
+    <Border CornerRadius="16" Background="#080D1A" BorderBrush="#1C273F" BorderThickness="1.2">
+        <Grid>
+            <!-- Ambient Gradient Background -->
+            <Grid.Background>
+                <RadialGradientBrush Center="0.5,0.12" GradientOrigin="0.5,0.12" RadiusX="0.8" RadiusY="0.8">
+                    <GradientStop Color="#14213D" Offset="0" />
+                    <GradientStop Color="#090E1A" Offset="0.6" />
+                    <GradientStop Color="#080D1A" Offset="1" />
+                </RadialGradientBrush>
+            </Grid.Background>
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="46" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- 1. Window Header Bar -->
+            <Grid Grid.Row="0" Margin="16,0,12,0" MouseDown="OnHeaderMouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="26" Height="26" CornerRadius="6" Background="{StaticResource BrushPrimaryGradient}">
+                        <TextBlock Text="FG" FontWeight="Bold" FontSize="11" Foreground="White"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="Finovo Global" FontWeight="Bold" FontSize="13.5" Foreground="White"
+                               VerticalAlignment="Center" Margin="10,0,8,0" />
+                    <Border CornerRadius="4" BorderBrush="#F95716" BorderThickness="1.2" Padding="6,2" VerticalAlignment="Center">
+                        <TextBlock Text="PRISE OS" FontWeight="Bold" FontSize="8.5" Foreground="#F95716" />
+                    </Border>
+                </StackPanel>
+
+                <!-- Window Control Buttons -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Style="{StaticResource WindowCtrlBtnStyle}" Content="—" Click="OnMinimizeClicked" />
+                    <Button Style="{StaticResource WindowCtrlBtnStyle}" Content="✕" Click="OnCloseClicked" />
+                </StackPanel>
+            </Grid>
+
+            <!-- 2. Main Tracking Content -->
+            <StackPanel Grid.Row="1" Margin="20,4,20,18">
+
+                <!-- User Profile Header Card -->
+                <Border Height="66" CornerRadius="14" Background="#0F182B" BorderBrush="#1E2D4A" BorderThickness="1"
+                        Effect="{StaticResource CardShadow}">
+                    <Grid Margin="14,0,14,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Avatar Circle -->
+                        <Border Grid.Column="0" Width="40" Height="40" CornerRadius="20" Background="{StaticResource BrushAvatarGradient}"
+                                VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtAvatarInitial" Text="S" FontWeight="Bold" FontSize="15" Foreground="White"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+
+                        <!-- User Info -->
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtUserName" Text="samaria.fatima80" FontWeight="Bold" FontSize="14.5" Foreground="White" />
+                            <TextBlock x:Name="TxtOrgName" Text="Finovo Global Enterprise" FontSize="11" Foreground="#94A3B8" Margin="0,1,0,0" />
+                        </StackPanel>
+
+                        <!-- Status Pill (• READY / TRACKING) -->
+                        <Border x:Name="BorderStatusPill" Grid.Column="2" CornerRadius="12" Background="#082218" BorderBrush="#10B981"
+                                BorderThickness="1" Padding="10,4" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="DotStatus" Width="6" Height="6" Fill="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="TxtStatusBadge" Text="READY" FontWeight="Bold" FontSize="10" Foreground="#10B981"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Logout / Power Button -->
+                        <Button Grid.Column="3" Width="30" Height="30" Background="Transparent" BorderThickness="0"
+                                Cursor="Hand" Click="OnLogoutClicked" ToolTip="Sign Out from Workspace">
+                            <Path Fill="#94A3B8"
+                                  Data="M16.56,5.44L15.11,6.89C16.84,7.94 18,9.83 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12C6,9.83 7.16,7.94 8.88,6.88L7.44,5.44C5.36,6.88 4,9.28 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12C20,9.28 18.64,6.88 16.56,5.44M13,3H11V11H13V3Z"
+                                  Stretch="Uniform" Width="15" Height="15" />
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <!-- Session Duration Timer Card -->
+                <Border Height="158" Margin="0,12,0,0" CornerRadius="16" Background="#0F182B" BorderBrush="#1E2D4A" BorderThickness="1"
+                        Effect="{StaticResource CardShadow}">
+                    <Grid>
+                        <!-- Top Ambient Glow inside card -->
+                        <Border CornerRadius="16,16,0,0" Height="60" VerticalAlignment="Top">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#182744" Offset="0" />
+                                    <GradientStop Color="#000F182B" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+
+                        <StackPanel Margin="18,12,18,12">
+                            <!-- Header Row -->
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Width="18" Height="18" CornerRadius="9" Background="#281A15" VerticalAlignment="Center">
+                                        <Path Fill="#F95716" Data="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"
+                                              Stretch="Uniform" Width="10" Height="10" />
+                                    </Border>
+                                    <TextBlock Text="SESSION DURATION" FontWeight="Bold" FontSize="10.5" Foreground="#F95716"
+                                               VerticalAlignment="Center" Margin="8,0,0,0" />
+                                </StackPanel>
+                                <TextBlock Text="•••" Foreground="#64748B" FontSize="14" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                            </Grid>
+
+                            <!-- Big Monospaced Timer Digits -->
+                            <TextBlock x:Name="TxtTimerDigits" Text="00:00:00" FontFamily="Consolas" FontWeight="Bold" FontSize="44"
+                                       Foreground="White" HorizontalAlignment="Center" Margin="0,6,0,0" />
+
+                            <!-- Subtitle message -->
+                            <TextBlock x:Name="TxtTimerSubtitle" Text="Ready to track. Select project or enter notes." FontSize="11.5"
+                                       Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 3 Mode Switch Tabs -->
+                <Grid Margin="0,12,0,0" Height="42">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Work Tab -->
+                    <Border x:Name="TabWork" Grid.Column="0" CornerRadius="10" Background="{StaticResource BrushPrimaryGradient}"
+                            Cursor="Hand" MouseDown="OnWorkTabClicked">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Fill="White" Data="M10,2H14A2,2 0 0,1 16,4V6H20A2,2 0 0,1 22,8V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V8A2,2 0 0,1 4,6H8V4A2,2 0 0,1 10,2M14,6V4H10V6H14Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock x:Name="TxtTabWork" Text="Work" FontWeight="SemiBold" FontSize="12" Foreground="White" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Research Tab -->
+                    <Border x:Name="TabResearch" Grid.Column="2" CornerRadius="10" Background="#0F182B" BorderBrush="#1E2D4A" BorderThickness="1"
+                            Cursor="Hand" MouseDown="OnResearchTabClicked">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Fill="#94A3B8" Data="M9,2A2,2 0 0,0 7,4V5H6A2,2 0 0,0 4,7V8H14V7A2,2 0 0,0 12,5H11V4A2,2 0 0,0 9,2M12,10H6A1,1 0 0,0 5,11V19A3,3 0 0,0 8,22H10A3,3 0 0,0 13,19V11A1,1 0 0,0 12,10Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock x:Name="TxtTabResearch" Text="Research" FontWeight="SemiBold" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Learning Tab -->
+                    <Border x:Name="TabLearning" Grid.Column="4" CornerRadius="10" Background="#0F182B" BorderBrush="#1E2D4A" BorderThickness="1"
+                            Cursor="Hand" MouseDown="OnLearningTabClicked">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Fill="#94A3B8" Data="M19,2L14,6.5V17.5L19,13V2M6.5,5C4.55,5 2.45,5.4 1,6.5V21.16C1,21.41 1.25,21.66 1.5,21.66C1.6,21.66 1.65,21.62 1.75,21.57C3.1,20.94 5.05,20.5 6.5,20.5C8.45,20.5 10.55,20.9 12,22C13.35,21.15 15.8,20.5 17.5,20.5C19.15,20.5 20.85,20.81 22.25,21.56C22.35,21.61 22.4,21.66 22.5,21.66C22.75,21.66 23,21.41 23,21.16V6.5C22.4,6.05 21.75,5.75 21,5.5V19C19.9,18.65 18.7,18.5 17.5,18.5C15.8,18.5 13.35,19.15 12,20V6.5C10.55,5.4 8.45,5 6.5,5Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock x:Name="TxtTabLearning" Text="Learning" FontWeight="SemiBold" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Project, Task & Memo Form Card -->
+                <Border Margin="0,12,0,0" CornerRadius="16" Background="#0F182B" BorderBrush="#1E2D4A" BorderThickness="1"
+                        Padding="18,14,18,16" Effect="{StaticResource CardShadow}">
+                    <StackPanel>
+                        <!-- Assigned Project -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Path Fill="#94A3B8" Data="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="ASSIGNED PROJECT" FontWeight="Bold" FontSize="9.5" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <ComboBox x:Name="CmbProjects" Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="OnProjectChanged" />
+
+                        <!-- Task Milestone -->
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,6">
+                            <Path Fill="#94A3B8" Data="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="TASK MILESTONE (OPTIONAL)" FontWeight="Bold" FontSize="9.5" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <ComboBox x:Name="CmbTasks" Style="{StaticResource DarkComboBoxStyle}" />
+
+                        <!-- Session Memo -->
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,6">
+                            <Path Fill="#94A3B8" Data="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"
+                                  Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="SESSION MEMO / WORK NOTES" FontWeight="Bold" FontSize="9.5" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Border CornerRadius="8" Background="#080E1C" BorderBrush="#223250" BorderThickness="1" Height="68" Padding="10,6">
+                            <TextBox x:Name="TxtMemo" Background="Transparent" Foreground="White" CaretBrush="#F95716"
+                                     BorderThickness="0" FontSize="12" TextWrapping="Wrap" AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto" />
+                        </Border>
+
+                        <!-- Primary Bottom Action Button -->
+                        <Button x:Name="BtnStartTracking" Style="{StaticResource PrimaryActionBtnStyle}"
+                                Content="▶   Start Tracking" Height="48" Margin="0,16,0,0" Effect="{StaticResource ButtonGlow}"
+                                Click="OnStartTrackingClicked" />
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
+

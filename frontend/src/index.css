@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: #0f172a;
+    background-color: #f8fafc;
+    background-image: radial-gradient(circle at 50% 0%, rgba(249, 87, 22, 0.14) 0%, rgba(254, 215, 170, 0.08) 25%, rgba(254, 243, 199, 0.03) 50%, #f8fafc 80%);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    background-position: top center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ==========================================================================
+   Universal Custom Scrollbar for all elements & the entire window
+   ========================================================================== */
+
+/* Firefox standard property applied universally */
+html,
+body,
+*,
+*::before,
+*::after {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* When hovering over any scrollable element in Firefox, highlight scrollbar with theme color */
+html:hover,
+body:hover,
+*:hover {
+  scrollbar-color: #f95716 transparent;
+}
+
+/* WebKit browsers (Chrome, Edge, Safari, Opera) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 9999px;
+  margin: 3px 0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+/* Hover over container softly warms the scrollbar */
+*:hover::-webkit-scrollbar-thumb {
+  background: #fbd5c6;
+}
+
+/* Direct hover on thumb glows with brand Finovo orange */
+::-webkit-scrollbar-thumb:hover {
+  background: #f95716 !important;
+}
+
+/* Active dragging thumb */
+::-webkit-scrollbar-thumb:active {
+  background: #d94f13 !important;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Utility to completely hide scrollbar while preserving scroll functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

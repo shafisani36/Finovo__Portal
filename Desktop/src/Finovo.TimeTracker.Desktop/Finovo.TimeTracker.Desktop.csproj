@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Finovo.TimeTracker.Desktop</RootNamespace>
+    <ApplicationTitle>Finovo Global Desktop Time Tracker</ApplicationTitle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Finovo.TimeTracker.Application\Finovo.TimeTracker.Application.csproj" />
+    <ProjectReference Include="..\Finovo.TimeTracker.Infrastructure\Finovo.TimeTracker.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
