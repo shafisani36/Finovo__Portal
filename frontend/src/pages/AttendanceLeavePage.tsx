@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
@@ -23,6 +23,7 @@ import {
   Camera,
 } from 'lucide-react';
 import { AppShell } from '../components/layouts/AppShell';
+import html2canvas from 'html2canvas';
 import api from '../lib/api';
 import { useConfirm } from '../context/ConfirmationModalContext';
 import { useAuth } from '../context/AuthContext';
@@ -234,6 +235,21 @@ export const AttendanceLeavePage: React.FC = () => {
   const [capturingScreenshotRecordId, setCapturingScreenshotRecordId] = useState<number | null>(null);
   const [activeScreenshotPreview, setActiveScreenshotPreview] = useState<ScreenshotItem | null>(null);
 
+  // Admin Live Attendance View Mode: 'team' (default for Admin) or 'my'
+  const [attendanceViewMode, setAttendanceViewMode] = useState<'team' | 'my'>('team');
+
+  // Count of currently active clocked-in employees
+  const activeEmployeesCount = React.useMemo(() => {
+    return teamAttendance.filter(
+      (r) => r.first_clock_in_at &&
+             !r.last_clock_out_at &&
+             r.status !== 'clocked_out' &&
+             r.status !== 'early_departure' &&
+             r.status !== 'partial_attendance' &&
+             (r.status === 'present' || r.status === 'late' || r.status === 'clocked_in')
+    ).length;
+  }, [teamAttendance]);
+
   // Computed Attendance Calendar Statuses
   const calendarDateStatuses = React.useMemo(() => {
     const map: Record<string, DayStatus> = {};
@@ -354,7 +370,7 @@ export const AttendanceLeavePage: React.FC = () => {
         setTeamAttendance(newTeam);
       }
 
-      // Store in high-performance cache pipeline
+      // Store in high-performance cache pipeline (15s short TTL to guarantee fresh telemetry)
       dataPipeline.set(cacheKey, {
         todayRecord: newToday,
         todayShift: newShift,
@@ -367,7 +383,7 @@ export const AttendanceLeavePage: React.FC = () => {
         leaveTypes: newTypes,
         pendingApprovals: newApp,
         teamAttendance: newTeam,
-      }, 120000);
+      }, 15000);
     } catch (err: any) {
       setErrorMsg(err.response?.data?.message || 'Failed to load attendance & leave records.');
     } finally {
@@ -378,6 +394,35 @@ export const AttendanceLeavePage: React.FC = () => {
 
   useEffect(() => {
     loadData();
+  }, [companySlug]);
+
+  // Real-time live team attendance synchronization for Admins & Managers
+  useEffect(() => {
+    if (!companySlug || !canCaptureScreenshot) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const teamRes = await api.get(`/api/v1/companies/${companySlug}/attendance/team`);
+        if (teamRes.data?.records) {
+          setTeamAttendance(teamRes.data.records);
+        }
+      } catch {
+        // Silent poll error catch
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [companySlug, canCaptureScreenshot]);
+
+  // Window focus listener to refresh instantly when switching between browser windows
+  useEffect(() => {
+    const handleFocus = () => {
+      if (companySlug) {
+        loadData(true);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, [companySlug]);
 
 
@@ -480,6 +525,27 @@ export const AttendanceLeavePage: React.FC = () => {
     try {
       setActionLoading(true);
       setErrorMsg(null);
+
+      // Prompt employee for desktop screen share so enterprise admin can monitor active work session
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { displaySurface: 'monitor' },
+            audio: false,
+          });
+          (window as any).__finovo_active_stream = stream;
+          stream.getVideoTracks().forEach((track) => {
+            track.onended = () => {
+              (window as any).__finovo_active_stream = null;
+              window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: false } }));
+            };
+          });
+          window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: true } }));
+        }
+      } catch (streamErr) {
+        console.warn('Screen sharing was not permitted by user:', streamErr);
+      }
+
       const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-in`, {
         source: 'web',
       });
@@ -508,6 +574,15 @@ export const AttendanceLeavePage: React.FC = () => {
       const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-out`, {
         source: 'web',
       });
+
+      // Stop and clear screen stream upon clock out
+      try {
+        const s = (window as any).__finovo_active_stream as MediaStream | undefined;
+        if (s) s.getTracks().forEach((t) => t.stop());
+      } catch {}
+      (window as any).__finovo_active_stream = null;
+      window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: false } }));
+
       setSuccessMsg(res.data?.message || 'Clocked out successfully.');
       window.dispatchEvent(new Event('finovo:storage-updated'));
       await loadData(true);
@@ -552,6 +627,102 @@ export const AttendanceLeavePage: React.FC = () => {
     }
   };
 
+  // Active MediaStream cache for session screen capture
+  const activeStreamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach((track) => track.stop());
+        activeStreamRef.current = null;
+      }
+    };
+  }, []);
+
+  /**
+   * Capture real employee screen / active window frame using the browser's Screen Capture API.
+   * Prompts to select the screen or active application window, then renders the live frame to high-res PNG.
+   */
+  const captureLiveScreenFrame = async (): Promise<string | null> => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      setErrorMsg('Screen capture is not supported by your browser. Please use Chrome, Edge, or Firefox on desktop.');
+      return null;
+    }
+
+    try {
+      let stream = activeStreamRef.current;
+      const isStreamActive = Boolean(
+        stream &&
+        stream.active &&
+        stream.getVideoTracks().some((t) => t.readyState === 'live')
+      );
+
+      if (!isStreamActive) {
+        // Request actual screen/window from browser
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: 'monitor',
+          },
+          audio: false,
+        });
+
+        activeStreamRef.current = stream;
+
+        // Clean up reference if user stops sharing via browser banner
+        stream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            activeStreamRef.current = null;
+          };
+        });
+      }
+
+      // Create a hidden video element to capture the frame
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = async () => {
+          try {
+            await video.play();
+          } catch {}
+          resolve();
+        };
+        setTimeout(resolve, 800);
+      });
+
+      // Brief delay to ensure the frame buffer is painted
+      await new Promise((r) => setTimeout(r, 150));
+
+      const width = video.videoWidth || 1920;
+      const height = video.videoHeight || 1080;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        return null;
+      }
+
+      ctx.drawImage(video, 0, 0, width, height);
+
+      // Return real PNG base64
+      const dataUrl = canvas.toDataURL('image/png', 0.95);
+      return dataUrl;
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
+        setErrorMsg('Screen capture cancelled. Please select your screen or active window when prompted to capture work in progress.');
+      } else {
+        setErrorMsg(`Screen capture error: ${err.message || 'Permission denied'}`);
+      }
+      return null;
+    }
+  };
+
   // Admin Remote Screenshot Capture (Protected by RBAC)
   const handleTakeScreenshot = async (record: AttendanceRecord) => {
     if (!canCaptureScreenshot) {
@@ -561,11 +732,14 @@ export const AttendanceLeavePage: React.FC = () => {
     const isClockedIn = Boolean(
       record.first_clock_in_at &&
       !record.last_clock_out_at &&
+      record.status !== 'clocked_out' &&
+      record.status !== 'early_departure' &&
+      record.status !== 'partial_attendance' &&
       (record.status === 'present' || record.status === 'late' || record.status === 'clocked_in')
     );
 
     if (!isClockedIn) {
-      setErrorMsg('Screenshot cannot be taken: Employee is not actively clocked in.');
+      setErrorMsg('Screenshot cannot be taken: Employee has clocked out or is not actively clocked in.');
       return;
     }
 
@@ -573,19 +747,68 @@ export const AttendanceLeavePage: React.FC = () => {
       setCapturingScreenshotRecordId(record.id);
       setErrorMsg(null);
 
-      const res = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/screenshot`);
-      const screenshotData: ScreenshotItem = res.data?.screenshot || {
-        id: Date.now(),
-        attendance_record_id: record.id,
-        url: res.data?.url,
-        stored_at: res.data?.stored_at || new Date().toISOString(),
-        admin: {
-          id: 1,
-          name: 'Administrator',
-        },
-      };
+      // 1. Dispatch remote screen capture request to the employee's active session
+      const reqRes = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/request-screenshot`);
+      const { mode, request_id, employee_name } = reqRes.data || {};
 
-      setSuccessMsg(`Screen capture saved successfully for ${record.membership?.user?.name || 'employee'}!`);
+      let screenshotData: ScreenshotItem | null = null;
+
+      if (mode === 'self_capture') {
+        // Self-capture mode: Admin is capturing their own record on the current browser
+        const canvas = await html2canvas(document.body, {
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          scale: 1,
+          windowWidth: window.innerWidth,
+          windowHeight: window.innerHeight,
+        });
+        const dataUrl = canvas.toDataURL('image/png', 0.9);
+
+        const res = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/screenshot`, {
+          image: dataUrl,
+        });
+        screenshotData = res.data?.screenshot || {
+          id: Date.now(),
+          attendance_record_id: record.id,
+          url: res.data?.url,
+          stored_at: res.data?.stored_at || new Date().toISOString(),
+          admin: { id: 1, name: 'Administrator' },
+        };
+      } else {
+        // Remote employee mode: Poll for employee's uploaded capture from Browser 2 (36 attempts * 500ms = 18s)
+        const maxAttempts = 36;
+        let attempts = 0;
+
+        while (attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 500));
+          attempts++;
+
+          try {
+            const pollRes = await api.get(`/api/v1/companies/${companySlug}/attendance/screenshot-status/${request_id}`);
+            if (pollRes.data?.status === 'fulfilled') {
+              screenshotData = pollRes.data?.screenshot || {
+                id: Date.now(),
+                attendance_record_id: record.id,
+                url: pollRes.data?.url,
+                stored_at: new Date().toISOString(),
+                admin: { id: 1, name: 'Administrator' },
+              };
+              break;
+            }
+          } catch {
+            // Keep polling while job is pending
+          }
+        }
+
+        if (!screenshotData) {
+          setErrorMsg(`Unable to capture ${employee_name || 'employee'}'s screen: Employee's browser has not enabled screen sharing yet. An urgent request has been displayed on the employee's screen.`);
+          setCapturingScreenshotRecordId(null);
+          return;
+        }
+      }
+
+      setSuccessMsg(`Screen capture received successfully from ${record.membership?.user?.name || 'employee'}'s active session!`);
       setActiveScreenshotPreview(screenshotData);
 
       // Trigger sidebar storage update
@@ -598,14 +821,14 @@ export const AttendanceLeavePage: React.FC = () => {
           const currentShots = prev.screenshots || [];
           return {
             ...prev,
-            screenshots: [screenshotData, ...currentShots],
+            screenshots: [screenshotData!, ...currentShots],
           };
         });
       }
 
       await loadData(true);
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Failed to capture screenshot. Ensure employee is currently clocked in.');
+      setErrorMsg(err.response?.data?.message || 'Failed to capture employee screenshot. Ensure employee is currently clocked in.');
     } finally {
       setCapturingScreenshotRecordId(null);
     }
@@ -751,8 +974,10 @@ export const AttendanceLeavePage: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm flex flex-col justify-between lg:col-span-2">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Attendance Status & Telemetry</span>
-                <div className="flex items-center gap-3 mt-1">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  {canCaptureScreenshot ? 'Attendance Telemetry & Workforce Overview' : 'Attendance Status & Telemetry'}
+                </span>
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
                   <div className={`w-3 h-3 rounded-full ${
                     todayRecord?.first_clock_in_at && !todayRecord?.last_clock_out_at
                       ? 'bg-emerald-500 animate-pulse'
@@ -767,6 +992,12 @@ export const AttendanceLeavePage: React.FC = () => {
                       ? 'Shift Completed & Clocked Out'
                       : 'Not Clocked In'}
                   </span>
+                  {canCaptureScreenshot && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      {activeEmployeesCount} Active Member{activeEmployeesCount !== 1 ? 's' : ''} Online
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -860,15 +1091,17 @@ export const AttendanceLeavePage: React.FC = () => {
                     <span>{todayRecord?.last_clock_out_at ? 'Clock In Again' : 'Clock In Now'}</span>
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleClockOutWeb}
-                    disabled={actionLoading}
-                    className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                  >
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>Clock Out</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleClockOutWeb}
+                      disabled={actionLoading}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Clock Out</span>
+                    </button>
+                  </>
                 )}
 
                 <Link
@@ -907,7 +1140,7 @@ export const AttendanceLeavePage: React.FC = () => {
             }`}
           >
             <Clock className="w-4 h-4" />
-            My Attendance Ledger
+            {canCaptureScreenshot ? 'Live Attendance Ledger' : 'My Attendance Ledger'}
           </button>
           <button
             onClick={() => setActiveTab('leave')}
@@ -930,7 +1163,7 @@ export const AttendanceLeavePage: React.FC = () => {
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              Team Attendance & Live Screenshots
+              Leave Approvals Queue
               {pendingApprovals.length > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-[#F95716] text-white">
                   {pendingApprovals.length}
@@ -942,92 +1175,320 @@ export const AttendanceLeavePage: React.FC = () => {
 
         {/* TAB 1: ATTENDANCE LEDGER */}
         {activeTab === 'attendance' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Custom Calendar Widget Matching Exact Reference Design */}
-            <div className="lg:col-span-4 flex flex-col items-center">
-              <div className="w-full max-w-[320px] mb-3 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-slate-800 text-sm">Attendance Visualizer</h4>
-                  <p className="text-[11px] text-slate-400">Monthly presence and punctuality status</p>
-                </div>
-              </div>
-              <CustomCalendar
-                dateStatuses={Object.keys(calendarDateStatuses).length > 0 ? calendarDateStatuses : undefined}
-                showLegend={true}
-                className="w-full max-w-[320px]"
-              />
-            </div>
+          canCaptureScreenshot && attendanceViewMode === 'team' ? (
+            <div className="space-y-4">
+              {/* Live Team & Employee Attendance Table */}
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-white via-slate-50/50 to-orange-50/20">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-orange-100/80 border border-orange-200/60 flex items-center justify-center text-[#F95716] shadow-2xs">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 text-base">Live Employee Attendance &amp; Telemetry</h4>
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          {activeEmployeesCount} Active Now
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Real-time workforce presence, shift compliance &amp; remote desktop screen capture
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Right Column: Attendance History Log Table */}
-            <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <h4 className="font-bold text-slate-800 text-sm">Attendance History Log</h4>
-                <span className="text-xs text-slate-400">Authoritative server evaluated work dates</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase tracking-wider font-semibold">
-                      <th className="py-3 px-4">Work Date</th>
-                      <th className="py-3 px-4">Shift</th>
-                      <th className="py-3 px-4">Clock In</th>
-                      <th className="py-3 px-4">Clock Out</th>
-                      <th className="py-3 px-4">Worked</th>
-                      <th className="py-3 px-4">Lateness</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {historyRecords.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="py-8 text-center text-slate-400 italic">
-                          No attendance records found.
-                        </td>
+                  {/* Toggle between Team Attendance and My Attendance */}
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 bg-slate-100 rounded-xl flex items-center text-xs font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceViewMode('team')}
+                        className={`px-3 py-1.5 rounded-lg transition ${
+                          attendanceViewMode === 'team'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        All Employees ({teamAttendance.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceViewMode('my')}
+                        className={`px-3 py-1.5 rounded-lg transition ${
+                          attendanceViewMode === 'my'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        My Attendance
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadData(true)}
+                      className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 transition"
+                      title="Force refresh live team records"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isValidating ? 'animate-spin text-[#F95716]' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase tracking-wider font-semibold">
+                        <th className="py-3.5 px-5">Employee</th>
+                        <th className="py-3.5 px-4">Shift</th>
+                        <th className="py-3.5 px-4">Clock In</th>
+                        <th className="py-3.5 px-4">Clock Out</th>
+                        <th className="py-3.5 px-4">Duration</th>
+                        <th className="py-3.5 px-4">Status</th>
+                        <th className="py-3.5 px-5 text-right">Actions</th>
                       </tr>
-                    ) : (
-                      historyRecords.map((r) => (
-                        <tr key={r.id} className="hover:bg-slate-50/50 transition">
-                          <td className="py-3 px-4 font-semibold text-slate-900">{r.work_date}</td>
-                          <td className="py-3 px-4 text-slate-600">{r.shift?.name || 'Standard'}</td>
-                          <td className="py-3 px-4">
-                            {r.first_clock_in_at ? new Date(r.first_clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                          </td>
-                          <td className="py-3 px-4">
-                            {r.last_clock_out_at ? new Date(r.last_clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                          </td>
-                          <td className="py-3 px-4 font-medium text-emerald-600">{formatSeconds(r.worked_seconds)}</td>
-                          <td className="py-3 px-4 text-amber-600">
-                            {r.late_seconds > 0 ? `${Math.round(r.late_seconds / 60)}m` : '0m'}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2 py-0.5 rounded font-semibold text-[11px] capitalize ${
-                              r.status === 'present' || r.status === 'clocked_out' ? 'bg-emerald-50 text-emerald-700' :
-                              r.status === 'late' ? 'bg-amber-50 text-amber-700' :
-                              r.status === 'on_leave' ? 'bg-blue-50 text-blue-700' :
-                              'bg-slate-100 text-slate-600'
-                            }`}>
-                              {r.status.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleViewDayReport(r)}
-                              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-semibold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              <span>View Report</span>
-                            </button>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {teamAttendance.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-slate-400 italic">
+                            <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                            <span>No employee attendance records logged for today yet.</span>
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        teamAttendance.map((rec) => {
+                          const isActivelyClockedIn = Boolean(
+                            rec.first_clock_in_at &&
+                            !rec.last_clock_out_at &&
+                            rec.status !== 'clocked_out' &&
+                            rec.status !== 'early_departure' &&
+                            rec.status !== 'partial_attendance' &&
+                            (rec.status === 'present' || rec.status === 'late' || rec.status === 'clocked_in')
+                          );
+                          const isClockedOut = Boolean(
+                            rec.last_clock_out_at ||
+                            rec.status === 'clocked_out' ||
+                            rec.status === 'early_departure' ||
+                            rec.status === 'partial_attendance'
+                          );
+                          const employeeName = rec.membership?.user?.name || 'Employee';
+                          const employeeEmail = rec.membership?.user?.email || '';
+
+                          return (
+                            <tr key={rec.id} className="hover:bg-slate-50/60 transition group">
+                              <td className="py-3.5 px-5">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-[#F95716] text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-2xs">
+                                    {employeeName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                                      <span>{employeeName}</span>
+                                      {isActivelyClockedIn && (
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Active Session" />
+                                      )}
+                                    </div>
+                                    {employeeEmail && (
+                                      <div className="text-[11px] text-slate-400">{employeeEmail}</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 text-slate-600">
+                                <div className="font-semibold text-slate-800">{rec.shift?.name || 'Standard Shift'}</div>
+                                <div className="text-[10px] text-slate-400">
+                                  {rec.shift?.start_time ? `${rec.shift.start_time.slice(0, 5)} - ${rec.shift.end_time?.slice(0, 5)}` : '09:00 - 18:00'}
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4">
+                                {rec.first_clock_in_at ? (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50/70 border border-emerald-100/80 text-emerald-800 font-bold">
+                                    <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>{new Date(rec.first_clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 font-mono">--:--</span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                {rec.last_clock_out_at ? (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-semibold">
+                                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>{new Date(rec.last_clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  </div>
+                                ) : isActivelyClockedIn ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 font-bold text-[11px] border border-blue-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
+                                    In Progress
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 font-mono">--:--</span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 font-bold text-slate-800">
+                                {formatSeconds(rec.worked_seconds)}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                {isActivelyClockedIn ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    <span>Actively Clocked In</span>
+                                  </span>
+                                ) : isClockedOut ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold text-[11px] bg-slate-100 text-slate-700 border border-slate-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                    <span>Clocked Out</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold text-[11px] bg-slate-50 text-slate-500 border border-slate-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                    <span>Not Clocked In</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-5 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {isActivelyClockedIn && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTakeScreenshot(rec)}
+                                      disabled={capturingScreenshotRecordId === rec.id}
+                                      title={`Capture live screen of ${employeeName}`}
+                                      className="px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition bg-gradient-to-r from-orange-500 to-[#F95716] hover:from-orange-600 hover:to-[#e0480a] text-white shadow-xs cursor-pointer active:scale-95 disabled:opacity-75"
+                                    >
+                                      <Camera className={`w-3.5 h-3.5 ${capturingScreenshotRecordId === rec.id ? 'animate-spin' : ''}`} />
+                                      <span>{capturingScreenshotRecordId === rec.id ? 'Capturing...' : 'Take Screenshot'}</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewDayReport(rec)}
+                                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold rounded-xl text-xs transition cursor-pointer inline-flex items-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-95"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>View</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left Column: Custom Calendar Widget Matching Exact Reference Design */}
+              <div className="lg:col-span-4 flex flex-col items-center">
+                <div className="w-full max-w-[320px] mb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">Attendance Visualizer</h4>
+                    <p className="text-[11px] text-slate-400">Monthly presence and punctuality status</p>
+                  </div>
+                  {canCaptureScreenshot && (
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceViewMode('team')}
+                      className="text-xs font-bold text-[#F95716] hover:underline"
+                    >
+                      &larr; Team View
+                    </button>
+                  )}
+                </div>
+                <CustomCalendar
+                  dateStatuses={Object.keys(calendarDateStatuses).length > 0 ? calendarDateStatuses : undefined}
+                  showLegend={true}
+                  className="w-full max-w-[320px]"
+                />
+              </div>
+
+              {/* Right Column: Attendance History Log Table */}
+              <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                  <h4 className="font-bold text-slate-800 text-sm">Personal Attendance History Log</h4>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-400">Authoritative server evaluated work dates</span>
+                    {canCaptureScreenshot && (
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceViewMode('team')}
+                        className="px-2.5 py-1 bg-orange-50 text-[#F95716] font-bold text-xs rounded-lg hover:bg-orange-100 transition"
+                      >
+                        Switch to Team View
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase tracking-wider font-semibold">
+                        <th className="py-3 px-4">Work Date</th>
+                        <th className="py-3 px-4">Shift</th>
+                        <th className="py-3 px-4">Clock In</th>
+                        <th className="py-3 px-4">Clock Out</th>
+                        <th className="py-3 px-4">Worked</th>
+                        <th className="py-3 px-4">Lateness</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {historyRecords.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-slate-400 italic">
+                            No attendance records found.
+                          </td>
+                        </tr>
+                      ) : (
+                        historyRecords.map((r) => (
+                          <tr key={r.id} className="hover:bg-slate-50/50 transition">
+                            <td className="py-3 px-4 font-semibold text-slate-900">{r.work_date}</td>
+                            <td className="py-3 px-4 text-slate-600">{r.shift?.name || 'Standard'}</td>
+                            <td className="py-3 px-4">
+                              {r.first_clock_in_at ? new Date(r.first_clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                            </td>
+                            <td className="py-3 px-4">
+                              {r.last_clock_out_at ? new Date(r.last_clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                            </td>
+                            <td className="py-3 px-4 font-medium text-emerald-600">{formatSeconds(r.worked_seconds)}</td>
+                            <td className="py-3 px-4 text-amber-600">
+                              {r.late_seconds > 0 ? `${Math.round(r.late_seconds / 60)}m` : '0m'}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded font-semibold text-[11px] capitalize ${
+                                r.status === 'present' || r.status === 'clocked_out' ? 'bg-emerald-50 text-emerald-700' :
+                                r.status === 'late' ? 'bg-amber-50 text-amber-700' :
+                                r.status === 'on_leave' ? 'bg-blue-50 text-blue-700' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {r.status.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleViewDayReport(r)}
+                                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-semibold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>View Report</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )
         )}
 
         {/* TAB 2: LEAVE & BALANCES */}
@@ -1214,96 +1675,30 @@ export const AttendanceLeavePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Team Attendance Today */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <h4 className="font-bold text-slate-800 text-sm">Team Attendance Today</h4>
-                <span className="text-xs text-slate-400">Authorized department members</span>
+            {/* Live Monitoring Quick Link */}
+            <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-2xl border border-orange-200/80 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#F95716] text-white flex items-center justify-center font-bold shrink-0 shadow-2xs">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">Live Workforce Attendance &amp; Screen Monitoring</h4>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    View today's live team attendance, active work sessions, and capture remote employee screenshots directly on the primary ledger.
+                  </p>
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase tracking-wider font-semibold">
-                      <th className="py-3 px-4">Employee</th>
-                      <th className="py-3 px-4">Clock In</th>
-                      <th className="py-3 px-4">Clock Out</th>
-                      <th className="py-3 px-4">Worked</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {teamAttendance.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 italic">
-                          No team attendance records logged for today.
-                        </td>
-                      </tr>
-                    ) : (
-                      teamAttendance.map((rec) => {
-                        const isActivelyClockedIn = Boolean(
-                          rec.first_clock_in_at &&
-                          !rec.last_clock_out_at &&
-                          (rec.status === 'present' || rec.status === 'late' || rec.status === 'clocked_in')
-                        );
-
-                        return (
-                          <tr key={rec.id} className="hover:bg-slate-50/50 transition">
-                            <td className="py-3 px-4 font-semibold text-slate-900">
-                              {rec.membership?.user?.name || 'Member'}
-                            </td>
-                            <td className="py-3 px-4">
-                              {rec.first_clock_in_at ? new Date(rec.first_clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                            </td>
-                            <td className="py-3 px-4">
-                              {rec.last_clock_out_at ? new Date(rec.last_clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                            </td>
-                            <td className="py-3 px-4 font-semibold text-emerald-600">{formatSeconds(rec.worked_seconds)}</td>
-                            <td className="py-3 px-4">
-                              <span className={`px-2 py-0.5 rounded font-semibold text-[11px] capitalize ${
-                                rec.status === 'present' || rec.status === 'clocked_out' ? 'bg-emerald-50 text-emerald-700' :
-                                rec.status === 'late' ? 'bg-amber-50 text-amber-700' :
-                                rec.status === 'on_leave' ? 'bg-blue-50 text-blue-700' :
-                                'bg-slate-100 text-slate-600'
-                              }`}>
-                                {rec.status.replace('_', ' ')}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                {canCaptureScreenshot && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleTakeScreenshot(rec)}
-                                    disabled={!isActivelyClockedIn || capturingScreenshotRecordId === rec.id}
-                                    title={isActivelyClockedIn ? "Capture live employee desktop screenshot" : "Employee must be actively clocked in to capture screen"}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 transition ${
-                                      isActivelyClockedIn
-                                        ? 'bg-orange-50 text-[#F95716] border border-orange-200 hover:bg-orange-100 cursor-pointer shadow-2xs'
-                                        : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
-                                    }`}
-                                  >
-                                    <Camera className="w-3.5 h-3.5" />
-                                    <span>{capturingScreenshotRecordId === rec.id ? 'Capturing...' : 'Take Screenshot'}</span>
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewDayReport(rec)}
-                                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-semibold rounded-lg text-[11px] transition cursor-pointer inline-flex items-center gap-1"
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                  <span>View Report</span>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('attendance');
+                  setAttendanceViewMode('team');
+                }}
+                className="px-4 py-2 bg-[#F95716] hover:bg-[#e0480a] text-white font-bold rounded-xl text-xs transition cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5"
+              >
+                <span>Open Live Team Ledger</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
           </div>
         )}

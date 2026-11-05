@@ -71,7 +71,7 @@ export const ScreenshotLightboxModal: React.FC<ScreenshotLightboxModalProps> = (
             </a>
             <a
               href={imageUrl}
-              download={`screenshot_${screenshot.id || Date.now()}`}
+              download={`screenshot_${screenshot.id || Date.now()}.${imageUrl.includes('.png') ? 'png' : 'svg'}`}
               className="px-3 py-1.5 bg-[#F95716] hover:bg-[#e0480a] text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shadow-xs"
               title="Download screenshot"
             >

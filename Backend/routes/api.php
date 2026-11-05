@@ -514,6 +514,10 @@ Route::prefix('v1')->group(function () {
                     Route::get('/history/{date}', [AttendanceController::class, 'dayHistory']);
                     Route::get('/records/{record}', [AttendanceController::class, 'recordDetails']);
                     Route::post('/{record}/screenshot', [ScreenshotController::class, 'store']);
+                    Route::post('/{record}/request-screenshot', [ScreenshotController::class, 'requestScreenshot']);
+                    Route::get('/screenshot-status/{requestId}', [ScreenshotController::class, 'checkScreenshotStatus']);
+                    Route::get('/employee/check-screenshot-request', [ScreenshotController::class, 'employeeCheckRequest']);
+                    Route::post('/employee/submit-screenshot', [ScreenshotController::class, 'employeeSubmitScreenshot']);
                 });
 
                 // M07: Leave Lifecycle & Balances
@@ -981,6 +985,10 @@ Route::prefix('v1')->group(function () {
             ->where('date', '\\d{4}-\\d{2}-\\d{2}');
         Route::get('/attendance/records/{record}', [AttendanceController::class, 'recordDetailsDirect']);
         Route::post('/attendance/{record}/screenshot', [ScreenshotController::class, 'store']);
+        Route::post('/attendance/{record}/request-screenshot', [ScreenshotController::class, 'requestScreenshot']);
+        Route::get('/attendance/screenshot-status/{requestId}', [ScreenshotController::class, 'checkScreenshotStatus']);
+        Route::get('/attendance/employee/check-screenshot-request', [ScreenshotController::class, 'employeeCheckRequest']);
+        Route::post('/attendance/employee/submit-screenshot', [ScreenshotController::class, 'employeeSubmitScreenshot']);
         Route::get('/dashboard/sidebar-stats', [DashboardController::class, 'sidebarStats']);
     });
 });

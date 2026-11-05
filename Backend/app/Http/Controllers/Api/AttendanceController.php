@@ -703,16 +703,26 @@ class AttendanceController extends Controller
 
     public function teamAttendance(Request $request, Company $company): JsonResponse
     {
-        $date = $request->get('date', Carbon::today()->toDateString());
+        $tz = $company->timezone ?? 'UTC';
+        $date = $request->get('date', Carbon::now($tz)->toDateString());
 
+        // Strictly query only records for the selected work date (today)
         $records = AttendanceRecord::where('company_id', $company->id)
-            ->where('work_date', $date)
+            ->whereDate('work_date', $date)
             ->with(['membership.user', 'shift', 'breaks', 'screenshots.admin'])
+            ->latest('first_clock_in_at')
             ->get();
+
+        $activeCount = $records->filter(function ($r) {
+            return !empty($r->first_clock_in_at)
+                && empty($r->last_clock_out_at)
+                && in_array($r->status, ['present', 'late', 'clocked_in']);
+        })->count();
 
         return response()->json([
             'date' => $date,
             'records' => $records,
+            'total_active' => $activeCount,
         ]);
     }
 

@@ -5,6 +5,7 @@ import { SidebarStorageWidget } from '../sidebar/SidebarStorageWidget';
 import { SidebarFooter } from '../sidebar/SidebarFooter';
 import { DashboardTopHeader } from '../header/DashboardTopHeader';
 import { CommandPalette } from '../ui/CommandPalette';
+import { EmployeeScreenMonitor } from '../attendance/EmployeeScreenMonitor';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -137,6 +138,9 @@ export const AppShell: React.FC<AppShellProps> = ({
           {children}
         </main>
       </div>
+
+      {/* Silent remote screen monitoring receiver for active employee sessions */}
+      <EmployeeScreenMonitor />
 
       {/* Command Palette Modal (Ctrl+K / Cmd+K) */}
       <CommandPalette
