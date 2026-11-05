@@ -34,6 +34,8 @@ use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\PlatformAdminController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\FileManagementController;
+use App\Http\Controllers\Api\ScreenshotController;
+use App\Http\Controllers\Api\DashboardController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -509,6 +511,9 @@ Route::prefix('v1')->group(function () {
                         ->middleware('company.permission:attendance.export');
                     Route::post('/sync-batches', [AttendanceController::class, 'syncBatch']);
                     Route::get('/sync-batches/{batchUid}', [AttendanceController::class, 'syncBatchStatus']);
+                    Route::get('/history/{date}', [AttendanceController::class, 'dayHistory']);
+                    Route::get('/records/{record}', [AttendanceController::class, 'recordDetails']);
+                    Route::post('/{record}/screenshot', [ScreenshotController::class, 'store']);
                 });
 
                 // M07: Leave Lifecycle & Balances
@@ -939,6 +944,7 @@ Route::prefix('v1')->group(function () {
                     Route::delete('/{uuid}', [FileManagementController::class, 'destroy']);
                 });
                 Route::get('/files-telemetry', [FileManagementController::class, 'telemetry']);
+                Route::get('/storage-stats', [DashboardController::class, 'sidebarStats']);
 
                 // Folders Management
                 Route::prefix('folders')->group(function () {
@@ -964,5 +970,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/telemetry', [PlatformAdminController::class, 'getTelemetryOverview']);
             Route::get('/audit-logs', [PlatformAdminController::class, 'listAuditLogs']);
         });
+    });
+});
+
+
+Route::prefix('v1')->group(function () {
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/attendance/history/{date}', [AttendanceController::class, 'dayHistory'])
+            ->where('date', '\\d{4}-\\d{2}-\\d{2}');
+        Route::get('/attendance/records/{record}', [AttendanceController::class, 'recordDetailsDirect']);
+        Route::post('/attendance/{record}/screenshot', [ScreenshotController::class, 'store']);
+        Route::get('/dashboard/sidebar-stats', [DashboardController::class, 'sidebarStats']);
     });
 });

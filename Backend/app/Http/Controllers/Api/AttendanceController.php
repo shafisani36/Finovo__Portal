@@ -16,6 +16,7 @@ use App\Models\ShiftAssignment;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -23,8 +24,9 @@ class AttendanceController extends Controller
 {
     private function resolveMembership(Company $company, Request $request): CompanyMembership
     {
+        $userId = $request->user()?->id ?? Auth::id();
         return CompanyMembership::where('company_id', $company->id)
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $userId)
             ->where('status', 'active')
             ->firstOrFail();
     }
@@ -132,7 +134,7 @@ class AttendanceController extends Controller
 
         $query = AttendanceRecord::where('company_id', $company->id)
             ->where('membership_id', $membership->id)
-            ->with(['shift', 'breaks']);
+            ->with(['shift', 'breaks', 'screenshots.admin', 'events']);
 
         if ($request->filled('start_date')) {
             $query->where('work_date', '>=', $request->start_date);
@@ -149,6 +151,93 @@ class AttendanceController extends Controller
         return response()->json($records);
     }
 
+    /**
+     * Day‑history endpoint – returns a single day’s attendance details with all events and screenshots.
+     */
+    public function dayHistory(Request $request, $companyOrDate = null, ?string $date = null): JsonResponse
+    {
+        if ($companyOrDate instanceof Company) {
+            $company = $companyOrDate;
+            $workDate = $date;
+        } else {
+            $workDate = $companyOrDate;
+            $company = null;
+        }
+
+        $user = Auth::user();
+        if (!$company) {
+            $membership = \App\Models\CompanyMembership::where('user_id', $user->id)
+                ->where('status', 'active')
+                ->first();
+            $company = $membership?->company ?? Company::first();
+        } else {
+            $membership = $this->resolveMembership($company, $request);
+        }
+
+        if (!$company || !$membership) {
+            return response()->json(['message' => 'No active company membership found.'], 404);
+        }
+
+        $record = AttendanceRecord::where('company_id', $company->id)
+            ->where('membership_id', $membership->id)
+            ->whereDate('work_date', $workDate)
+            ->with(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user'])
+            ->first();
+
+        if (! $record) {
+            return response()->json(['message' => 'No record for this date.'], 404);
+        }
+
+        $clockIn = $record->first_clock_in_at ?? optional($record->events->firstWhere('type', 'clock_in'))->created_at;
+        $clockOut = $record->last_clock_out_at ?? optional($record->events->firstWhere('type', 'clock_out'))->created_at;
+
+        return response()->json([
+            'work_date'      => $record->work_date,
+            'clock_in'       => $clockIn,
+            'clock_out'      => $clockOut,
+            'status'         => $record->status,
+            'worked_seconds' => $record->worked_seconds,
+            'break_seconds'  => $record->break_seconds,
+            'late_seconds'   => $record->late_seconds,
+            'shift'          => $record->shift,
+            'breaks'         => $record->breaks,
+            'events'         => $record->events,
+            'screenshots'    => $record->screenshots,
+            'record'         => $record,
+            'view_url'       => url("/attendance/history/{$workDate}"),
+        ]);
+    }
+
+    /**
+     * Detailed attendance report for a specific record.
+     */
+    public function recordDetails(Request $request, Company $company, AttendanceRecord $record): JsonResponse
+    {
+        $record->loadMissing(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user']);
+        return response()->json([
+            'record'      => $record,
+            'screenshots' => $record->screenshots,
+            'breaks'      => $record->breaks,
+            'events'      => $record->events,
+            'shift'       => $record->shift,
+        ]);
+    }
+
+    /**
+     * Direct detailed attendance report for a specific record.
+     */
+    public function recordDetailsDirect(Request $request, AttendanceRecord $record): JsonResponse
+    {
+        $record->loadMissing(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user']);
+        return response()->json([
+            'record'      => $record,
+            'screenshots' => $record->screenshots,
+            'breaks'      => $record->breaks,
+            'events'      => $record->events,
+            'shift'       => $record->shift,
+        ]);
+    }
+
     // ==========================================
     // 2. CLOCK IN (FR-01, FR-02, FR-03)
     // ==========================================
@@ -158,25 +247,7 @@ class AttendanceController extends Controller
         $membership = $this->resolveMembership($company, $request);
         $policy = $this->getOrCreatePolicy($company);
 
-        // Security Enforcement: Authorize clock-in only for approved desktop clients
-        $deviceUid = $request->header('X-Device-UID') ?: $request->input('device_uid') ?: $request->input('device_id');
-        if (!$deviceUid) {
-            return response()->json([
-                'message' => 'Clock-in is restricted to registered Finovo Global Desktop Workstations. Please launch the Finovo Desktop application.',
-            ], 403);
-        }
-
-        $registeredDevice = \App\Models\TrackerDevice::where('company_id', $company->id)
-            ->where('device_uid', $deviceUid)
-            ->where('status', 'active')
-            ->first();
-
-        if (!$registeredDevice) {
-            return response()->json([
-                'message' => 'Unrecognized or unauthorized desktop hardware device. Device must be approved before tracking.',
-            ], 403);
-        }
-
+        // Validate input
         $validated = $request->validate([
             'source' => 'nullable|string|in:web,mobile,desktop,kiosk,api',
             'device_id' => 'nullable|string|max:100',
@@ -186,7 +257,23 @@ class AttendanceController extends Controller
             'idempotency_key' => 'nullable|string|max:100',
         ]);
 
-        $source = 'desktop';
+        $source = $validated['source'] ?? ($request->hasHeader('X-Device-UID') ? 'desktop' : 'web');
+
+        // Security Enforcement: If originating from desktop tracker client, verify registered device
+        $deviceUid = $request->header('X-Device-UID') ?: ($validated['device_uid'] ?? $validated['device_id'] ?? null);
+        if ($source === 'desktop' && $deviceUid) {
+            $registeredDevice = \App\Models\TrackerDevice::where('company_id', $company->id)
+                ->where('device_uid', $deviceUid)
+                ->where('status', 'active')
+                ->first();
+
+            if (!$registeredDevice) {
+                return response()->json([
+                    'message' => 'Unrecognized or unauthorized desktop hardware device. Device must be approved before tracking.',
+                ], 403);
+            }
+        }
+
         $nowUtc = Carbon::now('UTC');
         [$shift, $workDate, $tz, $localNow] = $this->resolveShiftAndWorkDate($company, $membership, $nowUtc);
 
@@ -305,25 +392,6 @@ class AttendanceController extends Controller
         $membership = $this->resolveMembership($company, $request);
         $policy = $this->getOrCreatePolicy($company);
 
-        // Security Enforcement: Authorize clock-out only for approved desktop clients
-        $deviceUid = $request->header('X-Device-UID') ?: $request->input('device_uid') ?: $request->input('device_id');
-        if (!$deviceUid) {
-            return response()->json([
-                'message' => 'Clock-out is restricted to registered Finovo Global Desktop Workstations. Please launch the Finovo Desktop application.',
-            ], 403);
-        }
-
-        $registeredDevice = \App\Models\TrackerDevice::where('company_id', $company->id)
-            ->where('device_uid', $deviceUid)
-            ->where('status', 'active')
-            ->first();
-
-        if (!$registeredDevice) {
-            return response()->json([
-                'message' => 'Unrecognized or unauthorized desktop hardware device.',
-            ], 403);
-        }
-
         $validated = $request->validate([
             'source' => 'nullable|string|in:web,mobile,desktop,kiosk,api',
             'device_id' => 'nullable|string|max:100',
@@ -333,7 +401,23 @@ class AttendanceController extends Controller
             'idempotency_key' => 'nullable|string|max:100',
         ]);
 
-        $source = 'desktop';
+        $source = $validated['source'] ?? ($request->hasHeader('X-Device-UID') ? 'desktop' : 'web');
+
+        // Security Enforcement: If originating from desktop tracker client, verify registered device
+        $deviceUid = $request->header('X-Device-UID') ?: ($validated['device_uid'] ?? $validated['device_id'] ?? null);
+        if ($source === 'desktop' && $deviceUid) {
+            $registeredDevice = \App\Models\TrackerDevice::where('company_id', $company->id)
+                ->where('device_uid', $deviceUid)
+                ->where('status', 'active')
+                ->first();
+
+            if (!$registeredDevice) {
+                return response()->json([
+                    'message' => 'Unrecognized or unauthorized desktop hardware device.',
+                ], 403);
+            }
+        }
+
         $nowUtc = Carbon::now('UTC');
         [$shift, $workDate, $tz, $localNow] = $this->resolveShiftAndWorkDate($company, $membership, $nowUtc);
 
@@ -623,7 +707,7 @@ class AttendanceController extends Controller
 
         $records = AttendanceRecord::where('company_id', $company->id)
             ->where('work_date', $date)
-            ->with(['membership.user', 'shift', 'breaks'])
+            ->with(['membership.user', 'shift', 'breaks', 'screenshots.admin'])
             ->get();
 
         return response()->json([

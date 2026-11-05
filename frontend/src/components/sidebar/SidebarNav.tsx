@@ -137,7 +137,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ isCollapsed = false }) =
       title: 'TIME',
       items: [
         { label: 'Attendance & Time', to: `/app/${slug}/attendance`, icon: Clock },
-        { label: 'Leave Portal', to: `/app/${slug}/attendance`, icon: CalendarDays },
+        { label: 'Leave Portal', to: `/app/${slug}/leave`, icon: CalendarDays },
         { label: 'Live Tracker', to: `/app/${slug}/time`, icon: Zap },
         { label: 'Time Reports', to: `/app/${slug}/time`, icon: TrendingUp },
         { label: 'Download Tracker', to: `/app/${slug}/download-tracker`, icon: Download },

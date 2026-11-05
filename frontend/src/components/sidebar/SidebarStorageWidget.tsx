@@ -1,5 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Database } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import api from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 
 interface SidebarStorageWidgetProps {
   usedGb?: number;
@@ -7,24 +10,136 @@ interface SidebarStorageWidgetProps {
   isCollapsed?: boolean;
 }
 
+interface StorageStats {
+  usedGb: number;
+  totalGb: number;
+  usedBytes: number;
+  totalBytes: number;
+  percentage: number;
+  formattedUsed: string;
+  formattedTotal: string;
+}
+
 export const SidebarStorageWidget: React.FC<SidebarStorageWidgetProps> = ({
-  usedGb = 31,
-  totalGb = 50,
+  usedGb: propUsedGb,
+  totalGb: propTotalGb,
   isCollapsed = false,
 }) => {
-  const percentage = Math.round((usedGb / totalGb) * 100);
+  const { companySlug } = useParams<{ companySlug: string }>();
+  const { activeCompany } = useAuth();
+  const slug = companySlug || activeCompany?.company?.slug || 'default';
+
+  const [stats, setStats] = useState<StorageStats>(() => {
+    // Try restoring from localStorage cache for instant 0ms flicker-free render
+    try {
+      const cached = localStorage.getItem(`finovo_storage_stats_${slug}`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch {}
+
+    const u = propUsedGb !== undefined ? propUsedGb : 0;
+    const t = propTotalGb !== undefined ? propTotalGb : 50;
+    const pct = t > 0 ? Math.round((u / t) * 100) : 0;
+    return {
+      usedGb: u,
+      totalGb: t,
+      usedBytes: u * 1024 * 1024 * 1024,
+      totalBytes: t * 1024 * 1024 * 1024,
+      percentage: pct,
+      formattedUsed: u > 0 ? `${u.toFixed(1)} GB` : '0 GB',
+      formattedTotal: `${t} GB`,
+    };
+  });
+
+  const fetchStorageStats = useCallback(async () => {
+    try {
+      // 1. Try company-scoped endpoint
+      let res;
+      try {
+        res = await api.get(`/api/v1/companies/${slug}/storage-stats`);
+      } catch {
+        // Fallback to direct dashboard sidebar stats
+        res = await api.get(`/api/v1/dashboard/sidebar-stats?company=${slug}`);
+      }
+
+      if (res && res.data) {
+        const data = res.data;
+        const totalBytes = data.storage_allocated_bytes || (50 * 1024 * 1024 * 1024);
+        const usedBytes = data.storage_used_bytes ?? ((data.used_gb || 0) * 1024 * 1024 * 1024);
+        const totalGb = data.total_gb || Math.round(totalBytes / (1024 * 1024 * 1024)) || 50;
+        const usedGbVal = usedBytes / (1024 * 1024 * 1024);
+        
+        // Human-friendly representation
+        let formattedUsed: string;
+        if (usedBytes >= 1024 * 1024 * 1024) {
+          formattedUsed = `${usedGbVal.toFixed(2)} GB`;
+        } else if (usedBytes >= 1024 * 1024) {
+          formattedUsed = `${(usedBytes / (1024 * 1024)).toFixed(1)} MB`;
+        } else if (usedBytes > 0) {
+          formattedUsed = `${Math.round(usedBytes / 1024)} KB`;
+        } else {
+          formattedUsed = '0 GB';
+        }
+
+        const calculatedPct = totalBytes > 0 
+          ? Math.min(100, Math.max(0, Math.round((usedBytes / totalBytes) * 100))) 
+          : 0;
+
+        const updatedStats: StorageStats = {
+          usedGb: parseFloat(usedGbVal.toFixed(2)),
+          totalGb,
+          usedBytes,
+          totalBytes,
+          percentage: calculatedPct,
+          formattedUsed,
+          formattedTotal: `${totalGb} GB`,
+        };
+
+        setStats(updatedStats);
+        try {
+          localStorage.setItem(`finovo_storage_stats_${slug}`, JSON.stringify(updatedStats));
+        } catch {}
+      }
+    } catch {
+      // Silent fallback gracefully maintains state
+    }
+  }, [slug]);
+
+  useEffect(() => {
+    fetchStorageStats();
+
+    // Listen to reactive update events across tabs and app actions
+    const handleStorageChange = () => fetchStorageStats();
+    window.addEventListener('finovo:storage-updated', handleStorageChange);
+    window.addEventListener('storage', handleStorageChange);
+
+    // Poll periodically every 45s to reflect background file uploads
+    const interval = setInterval(fetchStorageStats, 45000);
+
+    return () => {
+      window.removeEventListener('finovo:storage-updated', handleStorageChange);
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [fetchStorageStats]);
+
+  const percentage = stats.percentage;
 
   if (isCollapsed) {
     return (
-      <div className="mx-2 my-2 p-2 rounded-xl bg-slate-50 border border-slate-200/60 flex flex-col items-center justify-center space-y-1">
-        <Database className="w-3.5 h-3.5 text-slate-500" />
+      <div 
+        className="mx-2 my-2 p-2 rounded-xl bg-slate-50 border border-slate-200/60 flex flex-col items-center justify-center space-y-1 group relative cursor-pointer"
+        title={`Storage: ${stats.formattedUsed} of ${stats.formattedTotal} used (${percentage}%)`}
+      >
+        <Database className="w-3.5 h-3.5 text-slate-500 group-hover:text-[#f95716] transition-colors" />
         <span className="text-[9px] font-bold text-slate-700">{percentage}%</span>
       </div>
     );
   }
 
   return (
-    <div className="mx-3.5 my-2 p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/70 space-y-2.5 select-none">
+    <div className="mx-3.5 my-2 p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/70 space-y-2.5 select-none transition-all">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Database className="w-3.5 h-3.5 text-slate-500" />
@@ -37,12 +152,14 @@ export const SidebarStorageWidget: React.FC<SidebarStorageWidgetProps> = ({
       <div className="w-full h-1.5 bg-slate-200/80 rounded-full overflow-hidden">
         <div
           className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-[#f95716] rounded-full transition-all duration-500"
-          style={{ width: `${percentage}%` }}
+          style={{ width: `${Math.max(percentage, percentage > 0 ? 3 : 0)}%` }}
         />
       </div>
 
-      <p className="text-[10.5px] text-slate-400 font-medium">
-        {usedGb} GB of {totalGb} GB used
+      <p className="text-[10.5px] text-slate-500 font-medium flex items-center justify-between">
+        <span>
+          <strong className="text-slate-700 font-semibold">{stats.formattedUsed}</strong> of {stats.formattedTotal} used
+        </span>
       </p>
     </div>
   );

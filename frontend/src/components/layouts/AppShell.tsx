@@ -77,7 +77,7 @@ export const AppShell: React.FC<AppShellProps> = ({
           onSearchClick={() => setIsCommandPaletteOpen(true)}
         />
         <SidebarNav isCollapsed={isSidebarCollapsed} />
-        <SidebarStorageWidget usedGb={31} totalGb={50} isCollapsed={isSidebarCollapsed} />
+        <SidebarStorageWidget isCollapsed={isSidebarCollapsed} />
         <SidebarFooter isCollapsed={isSidebarCollapsed} />
       </aside>
 
@@ -100,7 +100,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               }}
             />
             <SidebarNav />
-            <SidebarStorageWidget usedGb={31} totalGb={50} />
+            <SidebarStorageWidget />
             <SidebarFooter />
           </aside>
         </div>

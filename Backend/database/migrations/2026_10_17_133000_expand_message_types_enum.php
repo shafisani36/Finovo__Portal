@@ -10,7 +10,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        DB::statement("ALTER TABLE `messages` MODIFY COLUMN `message_type` ENUM('text', 'action', 'decision', 'announcement', 'system', 'call_log', 'meeting') NOT NULL DEFAULT 'text'");
+        // SQLite does not support MODIFY ENUM, skip this change on SQLite
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE `messages` MODIFY COLUMN `message_type` ENUM('text', 'action', 'decision', 'announcement', 'system', 'call_log', 'meeting') NOT NULL DEFAULT 'text'");
+        }
     }
 
     /**
@@ -18,6 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement("ALTER TABLE `messages` MODIFY COLUMN `message_type` ENUM('text', 'action', 'decision', 'announcement', 'system') NOT NULL DEFAULT 'text'");
+        if (DB::getDriverName() !== 'sqlite') {
+            DB::statement("ALTER TABLE `messages` MODIFY COLUMN `message_type` ENUM('text', 'action', 'decision', 'announcement', 'system') NOT NULL DEFAULT 'text'");
+        }
     }
 };

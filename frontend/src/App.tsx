@@ -246,6 +246,14 @@ export const App: React.FC = () => {
               }
             />
             <Route
+              path="/app/:companySlug/leave"
+              element={
+                <ProtectedRoute>
+                  <AttendanceLeavePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/app/:companySlug/monitoring"
               element={
                 <ProtectedRoute>

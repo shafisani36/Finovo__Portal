@@ -74,4 +74,9 @@ class AttendanceRecord extends Model
     {
         return $this->hasMany(AttendanceCorrectionRequest::class);
     }
+
+    public function screenshots(): HasMany
+    {
+        return $this->hasMany(Screenshot::class);
+    }
 }
