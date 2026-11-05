@@ -21,11 +21,11 @@ class BunnyStorageService
 
     public function __construct()
     {
-        $this->storageZone = config('services.bunny.storage_zone', env('BUNNY_STORAGE_ZONE', 'finovoglobal'));
-        $this->apiKey = config('services.bunny.api_key', env('BUNNY_STORAGE_API_KEY', ''));
-        $this->region = config('services.bunny.region', env('BUNNY_STORAGE_REGION', 'de'));
-        $this->pullZoneUrl = rtrim(config('services.bunny.pull_zone_url', env('BUNNY_PULL_ZONE_URL', 'https://finovoglobal.b-cdn.net')), '/');
-        $this->securityTokenKey = config('services.bunny.token_key', env('BUNNY_SECURITY_TOKEN_KEY', ''));
+        $this->storageZone = (string) (config('services.bunny.storage_zone') ?: env('BUNNY_STORAGE_ZONE', 'finovoglobal'));
+        $this->apiKey = (string) (config('services.bunny.api_key') ?: env('BUNNY_STORAGE_API_KEY', ''));
+        $this->region = (string) (config('services.bunny.region') ?: env('BUNNY_STORAGE_REGION', 'de'));
+        $this->pullZoneUrl = rtrim((string) (config('services.bunny.pull_zone_url') ?: env('BUNNY_PULL_ZONE_URL', 'https://finovoglobal.b-cdn.net')), '/');
+        $this->securityTokenKey = (string) (config('services.bunny.token_key') ?: env('BUNNY_SECURITY_TOKEN_KEY', ''));
 
         // Region endpoints: de -> storage.bunnycdn.com, ny -> ny.storage.bunnycdn.com, la -> la.storage.bunnycdn.com, sg -> sg.storage.bunnycdn.com
         $configuredEndpoint = config('services.bunny.endpoint', env('BUNNY_STORAGE_ENDPOINT'));
@@ -141,6 +141,15 @@ class BunnyStorageService
         // Local storage retrieval
         if (Storage::disk('local')->exists($storageKey)) {
             return Storage::disk('local')->get($storageKey);
+        }
+
+        if (Storage::disk('public')->exists($storageKey)) {
+            return Storage::disk('public')->get($storageKey);
+        }
+
+        $publicScreenshotKey = 'screenshots/' . basename($storageKey);
+        if (Storage::disk('public')->exists($publicScreenshotKey)) {
+            return Storage::disk('public')->get($publicScreenshotKey);
         }
 
         return null;

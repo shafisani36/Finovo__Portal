@@ -119,9 +119,9 @@ class ScreenshotController extends Controller
   <circle cx="65" cy="54" r="6" fill="#ef4444" />
   <circle cx="85" cy="54" r="6" fill="#f59e0b" />
   <circle cx="105" cy="54" r="6" fill="#10b981" />
-  <text x="135" y="59" fill="#cbd5e1" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="600">Finovo Enterprise WorkSession Monitor &bull; Employee Screen Capture</text>
+  <text x="135" y="59" fill="#cbd5e1" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="600">Finovo Enterprise WorkSession Monitor &#8226; Employee Screen Capture</text>
   <rect x="1050" y="42" width="170" height="24" rx="6" fill="#059669" fill-opacity="0.25" stroke="#10b981" stroke-width="0.5"/>
-  <text x="1135" y="58" fill="#34d399" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">&bull; CLOCKED IN &amp; ACTIVE</text>
+  <text x="1135" y="58" fill="#34d399" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">&#8226; CLOCKED IN &amp; ACTIVE</text>
 
   <!-- Screen Content Area -->
   <rect x="40" y="95" width="1200" height="585" rx="14" fill="#090d16" stroke="#334155" stroke-width="1"/>
@@ -144,7 +144,7 @@ class ScreenshotController extends Controller
   <!-- Main Canvas / Workplace Display -->
   <rect x="370" y="115" width="850" height="545" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
   <rect x="395" y="140" width="800" height="75" rx="8" fill="#1e293b"/>
-  <text x="420" y="175" fill="#f8fafc" font-family="sans-serif" font-size="17" font-weight="700">Finovo Platform &bull; Operational Work Session</text>
+  <text x="420" y="175" fill="#f8fafc" font-family="sans-serif" font-size="17" font-weight="700">Finovo Platform &#8226; Operational Work Session</text>
   <text x="420" y="198" fill="#38bdf8" font-family="sans-serif" font-size="12">Real-time screen capture authorized by Enterprise Administrator</text>
 
   <!-- Interactive activity representation bars -->
@@ -161,7 +161,7 @@ class ScreenshotController extends Controller
   <!-- Verification Stamp -->
   <rect x="800" y="580" width="400" height="60" rx="10" fill="url(#brandGrad)" fill-opacity="0.18" stroke="#f95716" stroke-width="1"/>
   <text x="820" y="605" fill="#fb923c" font-family="sans-serif" font-size="13" font-weight="700">Finovo Live Attendance Capture</text>
-  <text x="820" y="625" fill="#94a3b8" font-family="sans-serif" font-size="11">Captured for {$safeName} &bull; {$timeStr}</text>
+  <text x="820" y="625" fill="#94a3b8" font-family="sans-serif" font-size="11">Captured for {$safeName} &#8226; {$timeStr}</text>
 </svg>
 SVG;
             $filename = 'screenshot_' . $record->id . '_' . $timestamp . '.svg';
@@ -169,9 +169,9 @@ SVG;
             $filename = 'screenshot_' . $record->id . '_' . $timestamp . '.png';
         }
 
-        $url = StorageHelper::storeScreenshot($filename, $image);
-
         $adminId = Auth::id() ?? 1;
+
+        $url = StorageHelper::storeScreenshot($filename, $image, $record, $adminId);
 
         $screenshot = Screenshot::create([
             'attendance_record_id' => $record->id,

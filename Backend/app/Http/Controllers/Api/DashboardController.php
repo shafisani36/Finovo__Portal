@@ -58,15 +58,21 @@ class DashboardController extends Controller
             ]);
         }
 
-        $totalFileBytes = (int) FileDocument::where('company_id', $company->id)->sum('size_bytes');
-        
-        // Count approximate screenshot bytes
+        $fileBytesWithoutScreenshots = (int) FileDocument::where('company_id', $company->id)
+            ->where('file_category', '!=', 'screenshots')
+            ->sum('size_bytes');
+
+        $screenshotDocBytes = (int) FileDocument::where('company_id', $company->id)
+            ->where('file_category', 'screenshots')
+            ->sum('size_bytes');
+
         $screenshotCount = Screenshot::whereHas('attendanceRecord', function ($q) use ($company) {
             $q->where('company_id', $company->id);
         })->count();
-        $screenshotBytes = $screenshotCount * 180 * 1024;
 
-        $totalUsedBytes = $totalFileBytes + $screenshotBytes;
+        // If screenshot docs exist in storage, use exact byte size; otherwise fallback
+        $screenshotBytes = $screenshotDocBytes > 0 ? $screenshotDocBytes : ($screenshotCount * 180 * 1024);
+        $totalUsedBytes = $fileBytesWithoutScreenshots + $screenshotBytes;
 
         $usedGb = round($totalUsedBytes / (1024 * 1024 * 1024), 2);
         $totalGb = 50;

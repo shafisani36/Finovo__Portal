@@ -15,6 +15,7 @@ import {
   FileCode,
   FileArchive,
   Film,
+  Camera,
   Image as ImageIcon,
   File as FileGenericIcon,
   Trash2,
@@ -132,6 +133,8 @@ interface TelemetryStats {
   backup_versions_count: number;
   versions_trend_pct: number;
   folder_count: number;
+  screenshots_count?: number;
+  screenshots_bytes?: number;
   recently_accessed: FileDocItem[];
 }
 
@@ -785,7 +788,18 @@ export const FileManagementPage: React.FC = () => {
   };
 
   // Helper: File Type Icon and Color Styling (Unified Finovo Theme)
-  const getFileBadgeInfo = (ext: string) => {
+  const getFileBadgeInfo = (ext: string, category?: string, name?: string) => {
+    const cat = (category || '').toLowerCase();
+    const fileName = (name || '').toLowerCase();
+
+    if (cat === 'screenshots' || fileName.includes('screenshot')) {
+      return {
+        badge: 'SCREEN',
+        badgeBg: 'bg-rose-50 text-rose-600 border-rose-200/80',
+        iconBg: 'bg-rose-50 text-rose-600',
+        icon: Camera,
+      };
+    }
     const e = (ext || '').toLowerCase();
     if (e === 'pdf') {
       return {
@@ -854,6 +868,7 @@ export const FileManagementPage: React.FC = () => {
 
   // Helper: File subtitle description
   const getFileSubtitle = (ext: string, category?: string) => {
+    if (category === 'screenshots') return 'Live Employee Screen Capture';
     const e = (ext || '').toLowerCase();
     if (e === 'pdf') return 'PDF document';
     if (['mp4', 'mov', 'webm'].includes(e)) return 'Video recording';
@@ -925,6 +940,15 @@ export const FileManagementPage: React.FC = () => {
   const archivesCount = useMemo(() => {
     return files.filter((f) =>
       ['zip', 'rar', '7z', 'tar', 'gz', 'sql'].includes((f.extension || '').toLowerCase())
+    ).length;
+  }, [files]);
+
+  const screenshotsCount = useMemo(() => {
+    return files.filter(
+      (f) =>
+        f.file_category === 'screenshots' ||
+        (f.folder?.name || '').toLowerCase() === 'screenshots' ||
+        f.name.toLowerCase().includes('screenshot')
     ).length;
   }, [files]);
 
@@ -1019,6 +1043,14 @@ export const FileManagementPage: React.FC = () => {
               showPercent: false,
             },
             {
+              key: 'screenshots',
+              label: 'Screenshots',
+              count: screenshotsCount,
+              colorClass: 'bg-rose-500',
+              dotClass: 'bg-rose-500 rounded-full',
+              showPercent: false,
+            },
+            {
               key: 'media',
               label: 'Media',
               count: mediaCount,
@@ -1066,6 +1098,12 @@ export const FileManagementPage: React.FC = () => {
               label: 'Images',
               count: imagesCount,
               dotColor: 'bg-[#F95716]',
+            },
+            {
+              id: 'screenshots',
+              label: 'Screenshots',
+              count: screenshotsCount,
+              dotColor: 'bg-rose-500',
             },
             {
               id: 'media',
@@ -1557,7 +1595,7 @@ export const FileManagementPage: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {files.map((file) => {
-                const badge = getFileBadgeInfo(file.extension);
+                const badge = getFileBadgeInfo(file.extension, file.file_category, file.name);
                 const IconComp = badge.icon;
                 const isSelected = selectedFileUuids.includes(file.uuid);
 
@@ -1773,7 +1811,7 @@ export const FileManagementPage: React.FC = () => {
                     /* POPULATED ROWS */
                     files.map((file) => {
                       const isSelected = selectedFileUuids.includes(file.uuid);
-                      const badge = getFileBadgeInfo(file.extension);
+                      const badge = getFileBadgeInfo(file.extension, file.file_category, file.name);
                       const IconComp = badge.icon;
 
                       return (
@@ -1991,7 +2029,7 @@ export const FileManagementPage: React.FC = () => {
                   <div className="p-5 border-b border-slate-100 flex items-start justify-between bg-slate-50/50">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-10 h-10 rounded-xl bg-orange-50 text-[#F95716] flex items-center justify-center shrink-0 border border-orange-100 shadow-2xs">
-                        {React.createElement(getFileBadgeInfo(activeFile.extension).icon, {
+                        {React.createElement(getFileBadgeInfo(activeFile.extension, activeFile.file_category, activeFile.name).icon, {
                           className: 'w-5 h-5',
                         })}
                       </div>
@@ -2059,7 +2097,68 @@ export const FileManagementPage: React.FC = () => {
                       </div>
                     ) : activeDrawerTab === 'overview' ? (
                       <div className="space-y-4">
+                        {/* Visual Screenshot / Image Preview */}
+                        {(activeFile.file_category === 'screenshots' ||
+                          ['svg', 'png', 'jpg', 'jpeg', 'webp'].includes(
+                            (activeFile.extension || '').toLowerCase()
+                          )) && (
+                          <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-950 p-3 space-y-2.5 shadow-sm">
+                            <div className="flex items-center justify-between px-1">
+                              <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                                <Camera className="w-3.5 h-3.5 text-rose-400" />
+                                <span>
+                                  {activeFile.file_category === 'screenshots'
+                                    ? 'Live Employee Screen Capture'
+                                    : 'Media Preview'}
+                                </span>
+                              </span>
+                              <a
+                                href={
+                                  activeFile.cdn_url ||
+                                  activeFile.metadata?.local_url ||
+                                  `/storage/screenshots/${activeFile.name}`
+                                }
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10.5px] text-orange-400 hover:text-orange-300 flex items-center gap-1 font-semibold transition-colors"
+                              >
+                                <span>Open in Tab</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                            <div className="rounded-xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center p-1">
+                              <img
+                                src={
+                                  activeFile.cdn_url ||
+                                  activeFile.metadata?.local_url ||
+                                  `/storage/screenshots/${activeFile.name}`
+                                }
+                                alt={activeFile.original_name || activeFile.name}
+                                className="w-full h-auto object-contain max-h-60 rounded-lg"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = `/storage/screenshots/${activeFile.name}`;
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
                         <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+                          {activeFile.metadata?.employee_name && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Employee Monitored:</span>
+                              <span className="font-semibold text-slate-900">
+                                {activeFile.metadata.employee_name}
+                              </span>
+                            </div>
+                          )}
+                          {activeFile.metadata?.attendance_record_id && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Attendance Record:</span>
+                              <span className="font-mono text-slate-800">
+                                #{activeFile.metadata.attendance_record_id}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex justify-between">
                             <span className="text-slate-400">Original Filename:</span>
                             <span className="font-medium text-slate-800 font-mono">

@@ -104,10 +104,16 @@ class FileManagementController extends Controller
             }
         }
 
-        // Category filter (All, Documents, Images, Videos, Code, Archives)
+        // Category filter (All, Documents, Images, Videos, Code, Archives, Screenshots)
         if ($request->filled('category') && $request->input('category') !== 'all') {
             $cat = strtolower($request->input('category'));
-            $query->where('file_category', $cat);
+            if ($cat === 'screenshots') {
+                $query->where('file_category', 'screenshots');
+            } elseif ($cat === 'images') {
+                $query->whereIn('file_category', ['images', 'screenshots']);
+            } else {
+                $query->where('file_category', $cat);
+            }
         }
 
         // Type filter
@@ -207,6 +213,9 @@ class FileManagementController extends Controller
             ->limit(6)
             ->get();
 
+        $screenshotsCount = FileDocument::where('company_id', $comp->id)->where('file_category', 'screenshots')->count();
+        $screenshotsBytes = (int) FileDocument::where('company_id', $comp->id)->where('file_category', 'screenshots')->sum('size_bytes');
+
         return response()->json([
             'total_files' => $totalFiles,
             'files_trend_pct' => $totalFiles > 0 ? 12 : 0,
@@ -215,7 +224,50 @@ class FileManagementController extends Controller
             'backup_versions_count' => $totalVersions,
             'versions_trend_pct' => $totalVersions > 0 ? 5 : 0,
             'folder_count' => $totalFolders,
+            'screenshots_count' => $screenshotsCount,
+            'screenshots_bytes' => $screenshotsBytes,
             'recently_accessed' => $recentFiles,
+        ]);
+    }
+
+    /**
+     * GET /api/v1/companies/{company}/files/screenshots
+     * Dedicated API endpoint for employee monitoring screen captures stored in Bunny / local storage
+     */
+    public function screenshots(Request $request, $company): JsonResponse
+    {
+        $comp = $this->resolveCompany($company);
+
+        $query = FileDocument::where('company_id', $comp->id)
+            ->where('file_category', 'screenshots')
+            ->with(['uploader:id,name,email', 'folder:id,name,color,icon']);
+
+        if ($request->filled('search')) {
+            $search = '%' . trim($request->input('search')) . '%';
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', $search)
+                  ->orWhere('original_name', 'like', $search);
+            });
+        }
+
+        if ($request->filled('date')) {
+            $query->whereDate('created_at', $request->input('date'));
+        }
+
+        $perPage = max(5, min(100, (int) $request->input('per_page', 20)));
+        $screenshots = $query->orderByDesc('created_at')->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'total' => $screenshots->total(),
+            'storage_engine' => $this->bunnyService->isBunnyConfigured() ? 'bunny_cdn' : 'local_storage',
+            'data' => $screenshots->items(),
+            'pagination' => [
+                'current_page' => $screenshots->currentPage(),
+                'last_page' => $screenshots->lastPage(),
+                'per_page' => $screenshots->perPage(),
+                'total' => $screenshots->total(),
+            ],
         ]);
     }
 

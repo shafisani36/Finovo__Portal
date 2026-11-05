@@ -935,6 +935,7 @@ Route::prefix('v1')->group(function () {
                 // File & Document Management Module
                 Route::prefix('files')->group(function () {
                     Route::get('/', [FileManagementController::class, 'index']);
+                    Route::get('/screenshots', [FileManagementController::class, 'screenshots']);
                     Route::post('/upload', [FileManagementController::class, 'upload']);
                     Route::post('/bulk-action', [FileManagementController::class, 'bulkAction']);
                     Route::get('/history', [FileManagementController::class, 'auditHistory']);
