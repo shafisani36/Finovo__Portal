@@ -35,7 +35,6 @@ class ScreenshotController extends Controller
     private const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 
     private const ACTIVE_STATUSES = ['present', 'late', 'clocked_in'];
-    private const MANAGER_ROLE_SLUGS = ['company-owner', 'company-admin', 'project-manager', 'hr-officer'];
 
     /**
      * POST /attendance/{record}/screenshot
@@ -332,14 +331,7 @@ class ScreenshotController extends Controller
                 ->first();
         }
 
-        if (!$membership) {
-            return false;
-        }
-
-        return $membership->hasPermission('attendance.manage')
-            || $membership->hasPermission('monitoring.policy.manage')
-            || $membership->hasPermission('attendance.view_team')
-            || $membership->roles()->whereIn('slug', self::MANAGER_ROLE_SLUGS)->exists();
+        return $membership !== null && $membership->canViewMonitoringScreenshots();
     }
 
     private function isActivelyClockedIn(AttendanceRecord $record): bool

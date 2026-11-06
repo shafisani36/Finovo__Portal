@@ -157,12 +157,12 @@
                             <TextBlock x:Name="TxtOrgName" Text="Finovo Global Enterprise" FontSize="11" Foreground="#94A3B8" Margin="0,1,0,0" />
                         </StackPanel>
 
-                        <!-- Status Pill (• READY / TRACKING) -->
+                        <!-- Status Pill (CLOCKED OUT / CLOCKED IN) -->
                         <Border x:Name="BorderStatusPill" Grid.Column="2" CornerRadius="12" Background="#082218" BorderBrush="#10B981"
                                 BorderThickness="1" Padding="10,4" VerticalAlignment="Center" Margin="0,0,10,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse x:Name="DotStatus" Width="6" Height="6" Fill="#10B981" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <TextBlock x:Name="TxtStatusBadge" Text="READY" FontWeight="Bold" FontSize="10" Foreground="#10B981"
+                                <TextBlock x:Name="TxtStatusBadge" Text="CLOCKED OUT" FontWeight="Bold" FontSize="10" Foreground="#10B981"
                                            VerticalAlignment="Center" />
                             </StackPanel>
                         </Border>
@@ -210,8 +210,9 @@
                                        Foreground="White" HorizontalAlignment="Center" Margin="0,6,0,0" />
 
                             <!-- Subtitle message -->
-                            <TextBlock x:Name="TxtTimerSubtitle" Text="Ready to track. Select project or enter notes." FontSize="11.5"
-                                       Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                            <TextBlock x:Name="TxtTimerSubtitle" Text="Select a project, then clock in to start your work day." FontSize="11.5"
+                                       Foreground="#94A3B8" HorizontalAlignment="Center" Margin="12,4,12,0"
+                                       TextWrapping="Wrap" TextAlignment="Center" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -291,7 +292,7 @@
 
                         <!-- Primary Bottom Action Button -->
                         <Button x:Name="BtnStartTracking" Style="{StaticResource PrimaryActionBtnStyle}"
-                                Content="▶   Start Tracking" Height="48" Margin="0,16,0,0" Effect="{StaticResource ButtonGlow}"
+                                Content="▶   Clock In" Height="48" Margin="0,16,0,0" Effect="{StaticResource ButtonGlow}"
                                 Click="OnStartTrackingClicked" />
                     </StackPanel>
                 </Border>

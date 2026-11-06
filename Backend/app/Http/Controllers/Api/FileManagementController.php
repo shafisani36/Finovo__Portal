@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Models\CompanyMembership;
 use App\Models\FileAuditEvent;
 use App\Models\FileDocument;
 use App\Models\FileFolder;
@@ -36,6 +37,36 @@ class FileManagementController extends Controller
         return Company::where('id', $company)
             ->orWhere('slug', $company)
             ->firstOrFail();
+    }
+
+    /**
+     * Files the current user may see. Monitoring screenshots are restricted to administrators and managers.
+     */
+    protected function visibleFilesQuery(Request $request, Company $company)
+    {
+        $query = FileDocument::where('company_id', $company->id);
+
+        if (!$this->canViewScreenshotFiles($request, $company)) {
+            $query->where(function ($inner) {
+                $inner->whereNull('file_category')->orWhere('file_category', '!=', 'screenshots');
+            });
+        }
+
+        return $query;
+    }
+
+    protected function canViewScreenshotFiles(Request $request, Company $company): bool
+    {
+        $membership = $request->attributes->get('currentMembership');
+
+        if (!$membership || (int) $membership->company_id !== (int) $company->id) {
+            $membership = CompanyMembership::where('company_id', $company->id)
+                ->where('user_id', $request->user()?->id)
+                ->where('status', 'active')
+                ->first();
+        }
+
+        return $membership !== null && $membership->canViewMonitoringScreenshots();
     }
 
     /**
@@ -77,7 +108,7 @@ class FileManagementController extends Controller
     {
         $comp = $this->resolveCompany($company);
 
-        $query = FileDocument::where('company_id', $comp->id)
+        $query = $this->visibleFilesQuery($request, $comp)
             ->with(['folder:id,name,color', 'uploader:id,name,email']);
 
         // Folder filter
@@ -206,7 +237,7 @@ class FileManagementController extends Controller
         $allocatedBytes = 50 * 1024 * 1024 * 1024;
 
         // Recently accessed files
-        $recentFiles = FileDocument::where('company_id', $comp->id)
+        $recentFiles = $this->visibleFilesQuery($request, $comp)
             ->with(['uploader:id,name'])
             ->orderByDesc('last_accessed_at')
             ->orderByDesc('updated_at')
@@ -237,6 +268,10 @@ class FileManagementController extends Controller
     public function screenshots(Request $request, $company): JsonResponse
     {
         $comp = $this->resolveCompany($company);
+
+        if (!$this->canViewScreenshotFiles($request, $comp)) {
+            return response()->json(['message' => 'Only administrators and managers can view employee screenshots.'], 403);
+        }
 
         $query = FileDocument::where('company_id', $comp->id)
             ->where('file_category', 'screenshots')
@@ -498,7 +533,7 @@ class FileManagementController extends Controller
     {
         $comp = $this->resolveCompany($company);
 
-        $file = FileDocument::where('company_id', $comp->id)
+        $file = $this->visibleFilesQuery($request, $comp)
             ->where('uuid', $uuid)
             ->with(['folder', 'uploader:id,name,email', 'versions.creator:id,name', 'auditEvents.user:id,name'])
             ->firstOrFail();
@@ -519,7 +554,7 @@ class FileManagementController extends Controller
     {
         $comp = $this->resolveCompany($company);
 
-        $file = FileDocument::where('company_id', $comp->id)
+        $file = $this->visibleFilesQuery($request, $comp)
             ->where('uuid', $uuid)
             ->firstOrFail();
 
@@ -568,7 +603,7 @@ class FileManagementController extends Controller
     {
         $comp = $this->resolveCompany($company);
 
-        $file = FileDocument::where('company_id', $comp->id)
+        $file = $this->visibleFilesQuery($request, $comp)
             ->where('uuid', $uuid)
             ->firstOrFail();
 
@@ -610,7 +645,7 @@ class FileManagementController extends Controller
     {
         $comp = $this->resolveCompany($company);
 
-        $file = FileDocument::where('company_id', $comp->id)
+        $file = $this->visibleFilesQuery($request, $comp)
             ->where('uuid', $uuid)
             ->firstOrFail();
 
@@ -660,7 +695,7 @@ class FileManagementController extends Controller
         $action = $validated['action'];
         $uuids = $validated['uuids'];
 
-        $files = FileDocument::where('company_id', $comp->id)
+        $files = $this->visibleFilesQuery($request, $comp)
             ->whereIn('uuid', $uuids)
             ->get();
 
@@ -693,7 +728,7 @@ class FileManagementController extends Controller
 
         if ($action === 'star' || $action === 'unstar') {
             $isStarred = $action === 'star';
-            FileDocument::where('company_id', $comp->id)
+            $this->visibleFilesQuery($request, $comp)
                 ->whereIn('uuid', $uuids)
                 ->update(['is_starred' => $isStarred]);
             return response()->json(['message' => count($files) . ' files updated.']);

@@ -188,98 +188,100 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
           </div>
         )}
 
-        {/* ADMIN SCREENSHOTS SECTION */}
-        <div className="mb-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <div>
-              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Camera className="w-4 h-4 text-[#F95716]" />
-                <span>Admin Screen Captures</span>
-                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-[#F95716]">
-                  {screenshots.length}
-                </span>
-              </h4>
-              <p className="text-xs text-slate-400">
-                Screenshots captured by administrator to monitor active employee work activity
-              </p>
-            </div>
+        {/* ADMIN SCREENSHOTS SECTION (administrators and managers only) */}
+        {canCaptureScreenshot && (
+          <div className="mb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-[#F95716]" />
+                  <span>Admin Screen Captures</span>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-[#F95716]">
+                    {screenshots.length}
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Screenshots captured by administrator to monitor active employee work activity
+                </p>
+              </div>
 
-            {/* Quick Take Screenshot Button inside modal if actively clocked in */}
-            {canCaptureScreenshot && isClockedIn && onTakeScreenshot && (
-              <button
-                type="button"
-                onClick={() => onTakeScreenshot(record)}
-                disabled={isCapturingScreenshot}
-                className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-[#F95716] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-xs hover:opacity-95 transition cursor-pointer disabled:opacity-50"
-              >
-                {isCapturingScreenshot ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Capturing...</span>
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>Take Screenshot Now</span>
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-
-          {screenshots.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
-              <Camera className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-xs font-semibold text-slate-700">
-                No screen captures recorded for this attendance session.
-              </p>
-              <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
-                Admin can capture live employee desktop screenshots at any time while the employee is actively clocked in.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {screenshots.map((s, idx) => (
-                <div
-                  key={s.id || idx}
-                  onClick={() => onPreviewScreenshot(s)}
-                  className="group relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs cursor-pointer hover:shadow-md transition"
+              {/* Quick Take Screenshot Button inside modal if actively clocked in */}
+              {canCaptureScreenshot && isClockedIn && onTakeScreenshot && (
+                <button
+                  type="button"
+                  onClick={() => onTakeScreenshot(record)}
+                  disabled={isCapturingScreenshot}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-[#F95716] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-xs hover:opacity-95 transition cursor-pointer disabled:opacity-50"
                 >
-                  <div className="aspect-video w-full overflow-hidden bg-slate-950 flex items-center justify-center">
-                    <img
-                      src={normalizeImageUrl(s.url)}
-                      alt="Session Screenshot"
-                      className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                    />
-                  </div>
+                  {isCapturingScreenshot ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Capturing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Take Screenshot Now</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
 
-                  {/* Hover Overlay */}
-                  <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                    <div className="p-2 rounded-full bg-white/95 text-slate-900 shadow-md flex items-center gap-1.5 text-xs font-bold">
-                      <ZoomIn className="w-4 h-4 text-indigo-600" />
-                      <span>View Full Image</span>
+            {screenshots.length === 0 ? (
+              <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
+                <Camera className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-slate-700">
+                  No screen captures recorded for this attendance session.
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
+                  Admin can capture live employee desktop screenshots at any time while the employee is actively clocked in.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {screenshots.map((s, idx) => (
+                  <div
+                    key={s.id || idx}
+                    onClick={() => onPreviewScreenshot(s)}
+                    className="group relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs cursor-pointer hover:shadow-md transition"
+                  >
+                    <div className="aspect-video w-full overflow-hidden bg-slate-950 flex items-center justify-center">
+                      <img
+                        src={normalizeImageUrl(s.url)}
+                        alt="Session Screenshot"
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                      />
                     </div>
-                  </div>
 
-                  {/* Information Bar */}
-                  <div className="p-2.5 bg-white border-t border-slate-100 text-[11px] flex items-center justify-between">
-                    <div className="flex items-center gap-1 text-slate-700 font-semibold">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      <span>
-                        {s.stored_at
-                          ? new Date(s.stored_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                          : 'Captured'}
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                      <div className="p-2 rounded-full bg-white/95 text-slate-900 shadow-md flex items-center gap-1.5 text-xs font-bold">
+                        <ZoomIn className="w-4 h-4 text-indigo-600" />
+                        <span>View Full Image</span>
+                      </div>
+                    </div>
+
+                    {/* Information Bar */}
+                    <div className="p-2.5 bg-white border-t border-slate-100 text-[11px] flex items-center justify-between">
+                      <div className="flex items-center gap-1 text-slate-700 font-semibold">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span>
+                          {s.stored_at
+                            ? new Date(s.stored_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                            : 'Captured'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">
+                        {s.admin?.name ? `By ${s.admin.name}` : 'Admin'}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-400">
-                      {s.admin?.name ? `By ${s.admin.name}` : 'Admin'}
-                    </span>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">

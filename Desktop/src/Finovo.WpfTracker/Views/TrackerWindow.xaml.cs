@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -30,6 +31,8 @@ namespace FinovoTracker.Views
         private int _isScreenCaptureBusy;
 
         private string _activeMode = "task"; // "task", "research", "learning"
+        private bool _isClockedIn = false;
+        private bool _isAttendanceActionRunning = false;
         private bool _isTracking = false;
         private bool _isPaused = false;
         private DateTime? _trackingStartedUtc = null;
@@ -158,18 +161,57 @@ namespace FinovoTracker.Views
 
                 if (CmbProjects.Items.Count > 0) CmbProjects.SelectedIndex = 0;
 
-                // Check active server session
-                var active = _apiClient.GetCurrentSession(_session.CompanySlug);
-                if (active != null && active.Status == "running")
-                {
-                    _isTracking = true;
-                    _currentSessionId = active.Id;
-                    _trackingStartedUtc = active.StartedAtUtc;
-                    _accumulatedTime = DateTime.UtcNow - active.StartedAtUtc;
-                    UpdateTrackingUi(true);
-                }
             }
             catch { }
+
+            RestoreAttendanceState();
+        }
+
+        /// <summary>
+        /// Attendance (clock in / clock out) is the source of truth for the tracking state.
+        /// </summary>
+        private void RestoreAttendanceState()
+        {
+            AttendanceStatusDto attendance = null;
+            TrackingSessionDto activeSession = null;
+
+            try
+            {
+                attendance = _apiClient.GetAttendanceToday(_session.CompanySlug);
+                activeSession = _apiClient.GetCurrentSession(_session.CompanySlug);
+            }
+            catch
+            {
+                return;
+            }
+
+            bool hasRunningSession = activeSession != null && activeSession.Status == "running";
+            _isClockedIn = attendance != null && attendance.IsClockedIn;
+
+            if (_isClockedIn && hasRunningSession)
+            {
+                _isTracking = true;
+                _currentSessionId = activeSession.Id;
+                _trackingStartedUtc = activeSession.StartedAtUtc;
+                _accumulatedTime = DateTime.UtcNow - activeSession.StartedAtUtc;
+                _lastTickUtc = DateTime.UtcNow;
+                UpdateTrackingUi(true);
+            }
+            else if (_isClockedIn)
+            {
+                StartTracking();
+            }
+            else
+            {
+                if (hasRunningSession)
+                {
+                    _isTracking = true;
+                    _currentSessionId = activeSession.Id;
+                    StopTracking();
+                }
+
+                UpdateTrackingUi(false);
+            }
         }
 
         private void OnProjectChanged(object sender, SelectionChangedEventArgs e)
@@ -337,16 +379,113 @@ namespace FinovoTracker.Views
             catch { }
         }
 
-        private void OnStartTrackingClicked(object sender, RoutedEventArgs e)
+        private async void OnStartTrackingClicked(object sender, RoutedEventArgs e)
         {
-            if (!_isTracking)
+            if (_isAttendanceActionRunning) return;
+
+            if (_isPaused)
             {
-                StartTracking();
+                ResumeTracking();
+            }
+            else if (!_isClockedIn)
+            {
+                await ClockInAsync();
             }
             else
             {
-                StopTracking();
+                await ClockOutAsync();
             }
+        }
+
+        private async Task ClockInAsync()
+        {
+            string deviceUid = WindowsProtectedStorage.GetOrCreateDeviceUid();
+            SetAttendanceActionRunning(true, "Clocking in...");
+
+            try
+            {
+                await Task.Run(() => _apiClient.ClockIn(_session.CompanySlug, deviceUid));
+                _isClockedIn = true;
+                StartTracking();
+            }
+            catch (FinovoApiException ex)
+            {
+                ShowAttendanceError("Clock In Failed", ex.Message);
+            }
+            catch (Exception)
+            {
+                ShowAttendanceError("Clock In Failed", "Could not clock in. Please try again.");
+            }
+            finally
+            {
+                SetAttendanceActionRunning(false, null);
+            }
+        }
+
+        private async Task ClockOutAsync()
+        {
+            var confirmation = MessageBox.Show(
+                "Are you sure you want to clock out and end your work day?",
+                "Clock Out",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirmation != MessageBoxResult.Yes) return;
+
+            string deviceUid = WindowsProtectedStorage.GetOrCreateDeviceUid();
+            SetAttendanceActionRunning(true, "Clocking out...");
+
+            try
+            {
+                AttendanceStatusDto attendance = await Task.Run(() => _apiClient.ClockOut(_session.CompanySlug, deviceUid));
+                _isClockedIn = false;
+                StopTracking();
+
+                int workedSeconds = attendance != null ? attendance.WorkedSeconds : 0;
+                TxtTimerSubtitle.Text = string.Format(
+                    "Clocked out. Worked {0}h {1}m today. Full details are on the Finovo portal.",
+                    workedSeconds / 3600,
+                    (workedSeconds % 3600) / 60);
+            }
+            catch (FinovoApiException ex)
+            {
+                ShowAttendanceError("Clock Out Failed", ex.Message);
+            }
+            catch (Exception)
+            {
+                ShowAttendanceError("Clock Out Failed", "Could not clock out. Please try again.");
+            }
+            finally
+            {
+                SetAttendanceActionRunning(false, null);
+            }
+        }
+
+        private void SetAttendanceActionRunning(bool isRunning, string statusText)
+        {
+            _isAttendanceActionRunning = isRunning;
+            BtnStartTracking.IsEnabled = !isRunning;
+            if (isRunning && !string.IsNullOrEmpty(statusText)) TxtTimerSubtitle.Text = statusText;
+        }
+
+        private void ShowAttendanceError(string title, string message)
+        {
+            UpdateTrackingUi(_isClockedIn);
+            MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        private void ResumeTracking()
+        {
+            if (!_isTracking || !_isPaused) return;
+
+            try
+            {
+                _apiClient.ResumeSession(_session.CompanySlug, _currentSessionId);
+            }
+            catch { }
+
+            _isPaused = false;
+            _lastTickUtc = DateTime.UtcNow;
+            UpdateTrackingUi(true);
         }
 
         private void StartTracking()
@@ -439,7 +578,7 @@ namespace FinovoTracker.Views
         {
             if (tracking)
             {
-                TxtStatusBadge.Text = "TRACKING";
+                TxtStatusBadge.Text = "CLOCKED IN";
                 TxtStatusBadge.Foreground = (Brush)FindResource("BrushGreen");
                 BorderStatusPill.BorderBrush = (Brush)FindResource("BrushGreen");
                 BorderStatusPill.Background = new SolidColorBrush(Color.FromRgb(8, 34, 24));
@@ -447,20 +586,20 @@ namespace FinovoTracker.Views
                 string projText = CmbProjects.SelectedItem != null ? CmbProjects.SelectedItem.ToString() : "Active Project";
                 TxtTimerSubtitle.Text = string.Format("Active: {0}", projText);
 
-                BtnStartTracking.Content = "⏹   Stop Tracking";
+                BtnStartTracking.Content = "⏹   Clock Out";
                 BtnStartTracking.Background = new LinearGradientBrush(Color.FromRgb(240, 70, 70), Color.FromRgb(220, 38, 38), 90);
             }
             else
             {
-                TxtStatusBadge.Text = "READY";
+                TxtStatusBadge.Text = "CLOCKED OUT";
                 TxtStatusBadge.Foreground = (Brush)FindResource("BrushGreen");
                 BorderStatusPill.BorderBrush = (Brush)FindResource("BrushGreen");
                 BorderStatusPill.Background = new SolidColorBrush(Color.FromRgb(8, 34, 24));
 
                 TxtTimerDigits.Text = "00:00:00";
-                TxtTimerSubtitle.Text = "Ready to track. Select project or enter notes.";
+                TxtTimerSubtitle.Text = "Select a project, then clock in to start your work day.";
 
-                BtnStartTracking.Content = "▶   Start Tracking";
+                BtnStartTracking.Content = "▶   Clock In";
                 BtnStartTracking.Background = (Brush)FindResource("BrushPrimaryGradient");
             }
         }

@@ -413,6 +413,19 @@ export const AttendanceLeavePage: React.FC = () => {
     return () => clearInterval(interval);
   }, [companySlug, canCaptureScreenshot]);
 
+  // Clock in / clock out happen in the desktop tracker, so keep the employee's own attendance in sync
+  useEffect(() => {
+    if (!companySlug) return;
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadData(true);
+      }
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [companySlug]);
+
   // Window focus listener to refresh instantly when switching between browser windows
   useEffect(() => {
     const handleFocus = () => {
@@ -519,51 +532,7 @@ export const AttendanceLeavePage: React.FC = () => {
     }
   };
 
-  // Web Portal Clock In / Out & Break Handlers
-  const handleClockInWeb = async () => {
-    try {
-      setActionLoading(true);
-      setErrorMsg(null);
-
-      const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-in`, {
-        source: 'web',
-      });
-      setSuccessMsg(res.data?.message || 'Clocked in successfully from Finovo Portal.');
-      window.dispatchEvent(new Event('finovo:storage-updated'));
-      await loadData(true);
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Failed to clock in. Please try again.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleClockOutWeb = async () => {
-    const ok = await confirmModal({
-      title: 'Clock Out Confirmation',
-      message: 'Are you sure you want to clock out and end your active work session for today?',
-      confirmText: 'Clock Out',
-      variant: 'danger',
-    });
-    if (!ok) return;
-
-    try {
-      setActionLoading(true);
-      setErrorMsg(null);
-      const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-out`, {
-        source: 'web',
-      });
-
-      setSuccessMsg(res.data?.message || 'Clocked out successfully.');
-      window.dispatchEvent(new Event('finovo:storage-updated'));
-      await loadData(true);
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Failed to clock out. Please try again.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
+  // Clock in and clock out happen only from the Finovo Desktop Tracker.
   const handleStartBreakWeb = async () => {
     try {
       setActionLoading(true);
@@ -875,14 +844,14 @@ export const AttendanceLeavePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Web Portal Clock In / Out Actions & Desktop Notice */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-2 text-xs text-slate-600">
+            {/* Attendance actions (clock in / clock out happen in the desktop tracker) */}
+            <div className="flex flex-col gap-3 pt-4 border-t border-slate-100 2xl:flex-row 2xl:items-center 2xl:justify-between">
+              <div className="flex items-center gap-2 text-xs text-slate-600 min-w-0">
                 <Laptop className="w-4 h-4 text-[#F95716] shrink-0" />
-                <span>Web Portal Attendance &amp; Live Monitoring</span>
+                <span>Attendance is recorded by the Finovo Desktop Tracker</span>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <div className="flex flex-wrap items-center gap-2 *:whitespace-nowrap">
                 {todayRecord && (
                   <button
                     type="button"
@@ -929,29 +898,21 @@ export const AttendanceLeavePage: React.FC = () => {
                   </button>
                 )}
 
-                {(!todayRecord?.first_clock_in_at || (todayRecord?.first_clock_in_at && todayRecord?.last_clock_out_at)) ? (
-                  <button
-                    type="button"
-                    onClick={handleClockInWeb}
-                    disabled={actionLoading}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>{todayRecord?.last_clock_out_at ? 'Clock In Again' : 'Clock In Now'}</span>
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleClockOutWeb}
-                      disabled={actionLoading}
-                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>Clock Out</span>
-                    </button>
-                  </>
-                )}
+                <span
+                  className={`px-3 py-1.5 font-semibold text-xs rounded-xl border flex items-center gap-1.5 ${
+                    todayRecord?.first_clock_in_at && !todayRecord?.last_clock_out_at
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}
+                  title="Clock in and clock out from the Finovo Desktop Tracker"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>
+                    {todayRecord?.first_clock_in_at && !todayRecord?.last_clock_out_at
+                      ? 'Clocked in via Desktop Tracker'
+                      : 'Clock in from Desktop Tracker'}
+                  </span>
+                </span>
 
                 <Link
                   to={`/app/${companySlug}/download-tracker`}

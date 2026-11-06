@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -52,6 +53,30 @@ namespace FinovoTracker.Core
         public string Status { get; set; }
         public DateTime StartedAtUtc { get; set; }
         public int DurationSeconds { get; set; }
+    }
+
+    public class AttendanceStatusDto
+    {
+        public long RecordId { get; set; }
+        public string Status { get; set; }
+        public DateTime? ClockedInAtUtc { get; set; }
+        public DateTime? ClockedOutAtUtc { get; set; }
+        public int WorkedSeconds { get; set; }
+
+        public bool IsClockedIn
+        {
+            get { return ClockedInAtUtc.HasValue && !ClockedOutAtUtc.HasValue; }
+        }
+    }
+
+    public class FinovoApiException : Exception
+    {
+        public int StatusCode { get; private set; }
+
+        public FinovoApiException(string message, int statusCode) : base(message)
+        {
+            StatusCode = statusCode;
+        }
     }
 
     public class ScreenCaptureRequestDto
@@ -411,6 +436,130 @@ namespace FinovoTracker.Core
         }
 
         /// <summary>
+        /// Today's attendance record for the signed-in employee. Returns null when not clocked in yet today.
+        /// </summary>
+        public AttendanceStatusDto GetAttendanceToday(string companySlug)
+        {
+            string url = string.Format("{0}/api/v1/companies/{1}/attendance/me/today", _baseUrl, companySlug);
+            string json = SendRequest("GET", url, null, _bearerToken);
+            var root = _serializer.Deserialize<Dictionary<string, object>>(json);
+
+            return root != null && root.ContainsKey("attendance")
+                ? ParseAttendance(root["attendance"] as Dictionary<string, object>)
+                : null;
+        }
+
+        /// <summary>
+        /// Clocks the employee in for today. An existing active clock-in is treated as success.
+        /// </summary>
+        public AttendanceStatusDto ClockIn(string companySlug, string deviceUid)
+        {
+            string url = string.Format("{0}/api/v1/companies/{1}/attendance/clock-in", _baseUrl, companySlug);
+            return SendAttendanceAction(url, deviceUid, 409);
+        }
+
+        /// <summary>
+        /// Clocks the employee out for today and returns the final worked time.
+        /// </summary>
+        public AttendanceStatusDto ClockOut(string companySlug, string deviceUid)
+        {
+            string url = string.Format("{0}/api/v1/companies/{1}/attendance/clock-out", _baseUrl, companySlug);
+            return SendAttendanceAction(url, deviceUid, 409);
+        }
+
+        private AttendanceStatusDto SendAttendanceAction(string url, string deviceUid, int acceptedConflictStatus)
+        {
+            var payload = new Dictionary<string, object>
+            {
+                { "source", "desktop" },
+                { "idempotency_key", Guid.NewGuid().ToString("N") }
+            };
+
+            var headers = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(deviceUid)) headers["X-Device-UID"] = deviceUid;
+
+            try
+            {
+                string json = SendRequest("POST", url, payload, _bearerToken, 15000, headers);
+                return ParseAttendanceResponse(json);
+            }
+            catch (WebException ex)
+            {
+                var response = ex.Response as HttpWebResponse;
+                if (response == null)
+                {
+                    throw new FinovoApiException("Cannot reach the Finovo server. Check your internet connection and try again.", 0);
+                }
+
+                int statusCode = (int)response.StatusCode;
+                string body;
+                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                {
+                    body = reader.ReadToEnd();
+                }
+
+                if (statusCode == acceptedConflictStatus)
+                {
+                    var existing = ParseAttendanceResponse(body);
+                    if (existing != null) return existing;
+                }
+
+                throw new FinovoApiException(ExtractErrorMessage(body, statusCode), statusCode);
+            }
+        }
+
+        private AttendanceStatusDto ParseAttendanceResponse(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+
+            var root = _serializer.Deserialize<Dictionary<string, object>>(json);
+            return root != null && root.ContainsKey("attendance")
+                ? ParseAttendance(root["attendance"] as Dictionary<string, object>)
+                : null;
+        }
+
+        private static AttendanceStatusDto ParseAttendance(Dictionary<string, object> record)
+        {
+            if (record == null) return null;
+
+            return new AttendanceStatusDto
+            {
+                RecordId = record.ContainsKey("id") && record["id"] != null ? Convert.ToInt64(record["id"]) : 0,
+                Status = record.ContainsKey("status") && record["status"] != null ? record["status"].ToString() : string.Empty,
+                ClockedInAtUtc = ParseUtcDate(record, "first_clock_in_at"),
+                ClockedOutAtUtc = ParseUtcDate(record, "last_clock_out_at"),
+                WorkedSeconds = record.ContainsKey("worked_seconds") && record["worked_seconds"] != null ? Convert.ToInt32(record["worked_seconds"]) : 0
+            };
+        }
+
+        private static DateTime? ParseUtcDate(Dictionary<string, object> record, string key)
+        {
+            if (!record.ContainsKey(key) || record[key] == null) return null;
+
+            DateTime value;
+            if (DateTime.TryParse(record[key].ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out value))
+            {
+                return value;
+            }
+            return null;
+        }
+
+        private string ExtractErrorMessage(string body, int statusCode)
+        {
+            try
+            {
+                var root = _serializer.Deserialize<Dictionary<string, object>>(body);
+                if (root != null && root.ContainsKey("message") && root["message"] != null)
+                {
+                    return root["message"].ToString();
+                }
+            }
+            catch { }
+
+            return string.Format("The Finovo server returned an error ({0}). Please try again.", statusCode);
+        }
+
+        /// <summary>
         /// Heartbeat + poll for a pending administrator screenshot request.
         /// Returns null when there is nothing to capture.
         /// </summary>
@@ -493,7 +642,7 @@ namespace FinovoTracker.Core
             return dto;
         }
 
-        private string SendRequest(string method, string url, object payload, string token, int timeoutMilliseconds = 12000)
+        private string SendRequest(string method, string url, object payload, string token, int timeoutMilliseconds = 12000, Dictionary<string, string> extraHeaders = null)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = method;
@@ -502,6 +651,11 @@ namespace FinovoTracker.Core
             req.Timeout = timeoutMilliseconds;
             req.ReadWriteTimeout = timeoutMilliseconds;
             req.Headers[ClientHeaderName] = ClientHeaderValue;
+
+            if (extraHeaders != null)
+            {
+                foreach (var header in extraHeaders) req.Headers[header.Key] = header.Value;
+            }
 
             if (!string.IsNullOrEmpty(token)) req.Headers["Authorization"] = "Bearer " + token;
 

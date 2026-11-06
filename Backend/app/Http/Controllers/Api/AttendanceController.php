@@ -134,7 +134,7 @@ class AttendanceController extends Controller
 
         $query = AttendanceRecord::where('company_id', $company->id)
             ->where('membership_id', $membership->id)
-            ->with(['shift', 'breaks', 'screenshots.admin', 'events']);
+            ->with($this->recordRelations($membership));
 
         if ($request->filled('start_date')) {
             $query->where('work_date', '>=', $request->start_date);
@@ -181,7 +181,7 @@ class AttendanceController extends Controller
         $record = AttendanceRecord::where('company_id', $company->id)
             ->where('membership_id', $membership->id)
             ->whereDate('work_date', $workDate)
-            ->with(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user'])
+            ->with(array_merge($this->recordRelations($membership), ['membership.user']))
             ->first();
 
         if (! $record) {
@@ -202,7 +202,7 @@ class AttendanceController extends Controller
             'shift'          => $record->shift,
             'breaks'         => $record->breaks,
             'events'         => $record->events,
-            'screenshots'    => $record->screenshots,
+            'screenshots'    => $record->relationLoaded('screenshots') ? $record->screenshots : [],
             'record'         => $record,
             'view_url'       => url("/attendance/history/{$workDate}"),
         ]);
@@ -213,14 +213,11 @@ class AttendanceController extends Controller
      */
     public function recordDetails(Request $request, Company $company, AttendanceRecord $record): JsonResponse
     {
-        $record->loadMissing(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user']);
-        return response()->json([
-            'record'      => $record,
-            'screenshots' => $record->screenshots,
-            'breaks'      => $record->breaks,
-            'events'      => $record->events,
-            'shift'       => $record->shift,
-        ]);
+        if ((int) $record->company_id !== (int) $company->id) {
+            return response()->json(['message' => 'Attendance record not found.'], 404);
+        }
+
+        return $this->recordDetailsResponse($request, $record);
     }
 
     /**
@@ -228,14 +225,50 @@ class AttendanceController extends Controller
      */
     public function recordDetailsDirect(Request $request, AttendanceRecord $record): JsonResponse
     {
-        $record->loadMissing(['shift', 'breaks', 'events', 'screenshots.admin', 'membership.user']);
+        return $this->recordDetailsResponse($request, $record);
+    }
+
+    /**
+     * The record owner sees their own report without monitoring screenshots;
+     * administrators and managers see the full report including screenshots.
+     */
+    private function recordDetailsResponse(Request $request, AttendanceRecord $record): JsonResponse
+    {
+        $viewer = CompanyMembership::where('company_id', $record->company_id)
+            ->where('user_id', $request->user()?->id ?? Auth::id())
+            ->where('status', 'active')
+            ->first();
+
+        $isOwner = $viewer && (int) $viewer->id === (int) $record->membership_id;
+        $canViewScreenshots = $viewer && $viewer->canViewMonitoringScreenshots();
+
+        if (!$isOwner && !$canViewScreenshots) {
+            return response()->json(['message' => 'You are not allowed to view this attendance report.'], 403);
+        }
+
+        $record->loadMissing(array_merge($this->recordRelations($viewer), ['membership.user']));
+
         return response()->json([
             'record'      => $record,
-            'screenshots' => $record->screenshots,
+            'screenshots' => $record->relationLoaded('screenshots') ? $record->screenshots : [],
             'breaks'      => $record->breaks,
             'events'      => $record->events,
             'shift'       => $record->shift,
         ]);
+    }
+
+    /**
+     * Relations for an attendance report; monitoring screenshots only for administrators and managers.
+     */
+    private function recordRelations(?CompanyMembership $viewer): array
+    {
+        $relations = ['shift', 'breaks', 'events'];
+
+        if ($viewer && $viewer->canViewMonitoringScreenshots()) {
+            $relations[] = 'screenshots.admin';
+        }
+
+        return $relations;
     }
 
     // ==========================================

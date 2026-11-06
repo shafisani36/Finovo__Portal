@@ -89,6 +89,18 @@ class CompanyMembership extends Model
         return $this->roles->contains('slug', $roleSlug);
     }
 
+    /**
+     * Admin-captured monitoring screenshots are visible only to administrators and managers,
+     * never to the employee whose screen was captured.
+     */
+    public function canViewMonitoringScreenshots(): bool
+    {
+        return $this->hasPermission('attendance.manage')
+            || $this->hasPermission('monitoring.policy.manage')
+            || $this->hasPermission('attendance.view_team')
+            || $this->hasRole(['company-owner', 'company-admin', 'project-manager', 'hr-officer']);
+    }
+
     public function hasPermission(string $permissionKey): bool
     {
         // 1. Explicit Denial / Restriction Check (Deny overrides Allow)
