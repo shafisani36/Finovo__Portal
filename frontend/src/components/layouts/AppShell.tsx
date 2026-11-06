@@ -139,7 +139,7 @@ export const AppShell: React.FC<AppShellProps> = ({
         </main>
       </div>
 
-      {/* Silent remote screen monitoring receiver for active employee sessions */}
+      {/* Reminds clocked-in employees to open the Finovo Desktop Tracker */}
       <EmployeeScreenMonitor />
 
       {/* Command Palette Modal (Ctrl+K / Cmd+K) */}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
@@ -23,7 +23,6 @@ import {
   Camera,
 } from 'lucide-react';
 import { AppShell } from '../components/layouts/AppShell';
-import html2canvas from 'html2canvas';
 import api from '../lib/api';
 import { useConfirm } from '../context/ConfirmationModalContext';
 import { useAuth } from '../context/AuthContext';
@@ -526,26 +525,6 @@ export const AttendanceLeavePage: React.FC = () => {
       setActionLoading(true);
       setErrorMsg(null);
 
-      // Prompt employee for desktop screen share so enterprise admin can monitor active work session
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-          const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: 'monitor' },
-            audio: false,
-          });
-          (window as any).__finovo_active_stream = stream;
-          stream.getVideoTracks().forEach((track) => {
-            track.onended = () => {
-              (window as any).__finovo_active_stream = null;
-              window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: false } }));
-            };
-          });
-          window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: true } }));
-        }
-      } catch (streamErr) {
-        console.warn('Screen sharing was not permitted by user:', streamErr);
-      }
-
       const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-in`, {
         source: 'web',
       });
@@ -574,14 +553,6 @@ export const AttendanceLeavePage: React.FC = () => {
       const res = await api.post(`/api/v1/companies/${companySlug}/attendance/clock-out`, {
         source: 'web',
       });
-
-      // Stop and clear screen stream upon clock out
-      try {
-        const s = (window as any).__finovo_active_stream as MediaStream | undefined;
-        if (s) s.getTracks().forEach((t) => t.stop());
-      } catch {}
-      (window as any).__finovo_active_stream = null;
-      window.dispatchEvent(new CustomEvent('finovo:screen-stream-changed', { detail: { active: false } }));
 
       setSuccessMsg(res.data?.message || 'Clocked out successfully.');
       window.dispatchEvent(new Event('finovo:storage-updated'));
@@ -627,208 +598,86 @@ export const AttendanceLeavePage: React.FC = () => {
     }
   };
 
-  // Active MediaStream cache for session screen capture
-  const activeStreamRef = useRef<MediaStream | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (activeStreamRef.current) {
-        activeStreamRef.current.getTracks().forEach((track) => track.stop());
-        activeStreamRef.current = null;
-      }
-    };
-  }, []);
+  const isRecordActivelyClockedIn = (record: AttendanceRecord): boolean =>
+    Boolean(
+      record.first_clock_in_at &&
+      !record.last_clock_out_at &&
+      (record.status === 'present' || record.status === 'late' || record.status === 'clocked_in')
+    );
 
   /**
-   * Capture real employee screen / active window frame using the browser's Screen Capture API.
-   * Prompts to select the screen or active application window, then renders the live frame to high-res PNG.
+   * Admin remote screenshot (protected by RBAC).
+   * The request is delivered to the Finovo Desktop Tracker running on the employee's computer,
+   * which captures the real screen natively (no browser share-screen prompt) and uploads it.
    */
-  const captureLiveScreenFrame = async (): Promise<string | null> => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      setErrorMsg('Screen capture is not supported by your browser. Please use Chrome, Edge, or Firefox on desktop.');
-      return null;
-    }
-
-    try {
-      let stream = activeStreamRef.current;
-      const isStreamActive = Boolean(
-        stream &&
-        stream.active &&
-        stream.getVideoTracks().some((t) => t.readyState === 'live')
-      );
-
-      if (!isStreamActive) {
-        // Request actual screen/window from browser
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            displaySurface: 'monitor',
-          },
-          audio: false,
-        });
-
-        activeStreamRef.current = stream;
-
-        // Clean up reference if user stops sharing via browser banner
-        stream.getVideoTracks().forEach((track) => {
-          track.onended = () => {
-            activeStreamRef.current = null;
-          };
-        });
-      }
-
-      // Create a hidden video element to capture the frame
-      const video = document.createElement('video');
-      video.autoplay = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.srcObject = stream;
-
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = async () => {
-          try {
-            await video.play();
-          } catch {}
-          resolve();
-        };
-        setTimeout(resolve, 800);
-      });
-
-      // Brief delay to ensure the frame buffer is painted
-      await new Promise((r) => setTimeout(r, 150));
-
-      const width = video.videoWidth || 1920;
-      const height = video.videoHeight || 1080;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
-        return null;
-      }
-
-      ctx.drawImage(video, 0, 0, width, height);
-
-      // Return real PNG base64
-      const dataUrl = canvas.toDataURL('image/png', 0.95);
-      return dataUrl;
-    } catch (err: any) {
-      if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
-        setErrorMsg('Screen capture cancelled. Please select your screen or active window when prompted to capture work in progress.');
-      } else {
-        setErrorMsg(`Screen capture error: ${err.message || 'Permission denied'}`);
-      }
-      return null;
-    }
-  };
-
-  // Admin Remote Screenshot Capture (Protected by RBAC)
   const handleTakeScreenshot = async (record: AttendanceRecord) => {
     if (!canCaptureScreenshot) {
       setErrorMsg('Access Denied: Only administrators have permission to capture employee screens.');
       return;
     }
-    const isClockedIn = Boolean(
-      record.first_clock_in_at &&
-      !record.last_clock_out_at &&
-      record.status !== 'clocked_out' &&
-      record.status !== 'early_departure' &&
-      record.status !== 'partial_attendance' &&
-      (record.status === 'present' || record.status === 'late' || record.status === 'clocked_in')
-    );
 
-    if (!isClockedIn) {
+    if (!isRecordActivelyClockedIn(record)) {
       setErrorMsg('Screenshot cannot be taken: Employee has clocked out or is not actively clocked in.');
       return;
     }
 
+    const employeeName = record.membership?.user?.name || 'employee';
+
     try {
       setCapturingScreenshotRecordId(record.id);
       setErrorMsg(null);
+      setSuccessMsg(null);
 
-      // 1. Dispatch remote screen capture request to the employee's active session
-      const reqRes = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/request-screenshot`);
-      const { mode, request_id, employee_name } = reqRes.data || {};
+      const requestResponse = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/request-screenshot`);
+      const requestId: string | undefined = requestResponse.data?.request_id;
+      if (!requestId) {
+        setErrorMsg('Unable to send the screenshot request. Please try again.');
+        return;
+      }
 
+      const pollIntervalMs = 1000;
+      const maxAttempts = 25;
       let screenshotData: ScreenshotItem | null = null;
 
-      if (mode === 'self_capture') {
-        // Self-capture mode: Admin is capturing their own record on the current browser
-        const canvas = await html2canvas(document.body, {
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          scale: 1,
-          windowWidth: window.innerWidth,
-          windowHeight: window.innerHeight,
-        });
-        const dataUrl = canvas.toDataURL('image/png', 0.9);
+      for (let attempt = 0; attempt < maxAttempts && !screenshotData; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
-        const res = await api.post(`/api/v1/companies/${companySlug}/attendance/${record.id}/screenshot`, {
-          image: dataUrl,
-        });
-        screenshotData = res.data?.screenshot || {
-          id: Date.now(),
-          attendance_record_id: record.id,
-          url: res.data?.url,
-          stored_at: res.data?.stored_at || new Date().toISOString(),
-          admin: { id: 1, name: 'Administrator' },
-        };
-      } else {
-        // Remote employee mode: Poll for employee's uploaded capture from Browser 2 (36 attempts * 500ms = 18s)
-        const maxAttempts = 36;
-        let attempts = 0;
+        try {
+          const statusResponse = await api.get(`/api/v1/companies/${companySlug}/attendance/screenshot-status/${requestId}`);
+          const status = statusResponse.data?.status;
 
-        while (attempts < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 500));
-          attempts++;
-
-          try {
-            const pollRes = await api.get(`/api/v1/companies/${companySlug}/attendance/screenshot-status/${request_id}`);
-            if (pollRes.data?.status === 'fulfilled') {
-              screenshotData = pollRes.data?.screenshot || {
-                id: Date.now(),
-                attendance_record_id: record.id,
-                url: pollRes.data?.url,
-                stored_at: new Date().toISOString(),
-                admin: { id: 1, name: 'Administrator' },
-              };
-              break;
-            }
-          } catch {
-            // Keep polling while job is pending
+          if (status === 'fulfilled' && statusResponse.data?.screenshot) {
+            screenshotData = statusResponse.data.screenshot as ScreenshotItem;
+          } else if (status === 'failed') {
+            setErrorMsg(statusResponse.data?.message || `The desktop tracker on ${employeeName}'s computer could not capture the screen.`);
+            return;
           }
-        }
-
-        if (!screenshotData) {
-          setErrorMsg(`Unable to capture ${employee_name || 'employee'}'s screen: Employee's browser has not enabled screen sharing yet. An urgent request has been displayed on the employee's screen.`);
-          setCapturingScreenshotRecordId(null);
-          return;
+        } catch (pollError: any) {
+          if (pollError.response?.status === 404) {
+            setErrorMsg(`Screenshot request expired. ${employeeName}'s desktop tracker did not respond in time.`);
+            return;
+          }
         }
       }
 
-      setSuccessMsg(`Screen capture received successfully from ${record.membership?.user?.name || 'employee'}'s active session!`);
-      setActiveScreenshotPreview(screenshotData);
+      if (!screenshotData) {
+        setErrorMsg(`No response from ${employeeName}'s desktop tracker. Make sure the Finovo Desktop Tracker is open and signed in, then try again.`);
+        return;
+      }
 
-      // Trigger sidebar storage update
+      setSuccessMsg(`Screenshot captured from ${employeeName}'s screen.`);
+      setActiveScreenshotPreview(screenshotData);
       window.dispatchEvent(new Event('finovo:storage-updated'));
 
-      // If report modal is currently open, attach the screenshot to the active view
       if (selectedReportRecord && selectedReportRecord.id === record.id) {
-        setSelectedReportRecord((prev) => {
-          if (!prev) return prev;
-          const currentShots = prev.screenshots || [];
-          return {
-            ...prev,
-            screenshots: [screenshotData!, ...currentShots],
-          };
-        });
+        setSelectedReportRecord((previous) =>
+          previous ? { ...previous, screenshots: [screenshotData!, ...(previous.screenshots || [])] } : previous
+        );
       }
 
       await loadData(true);
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'Failed to capture employee screenshot. Ensure employee is currently clocked in.');
+      setErrorMsg(err.response?.data?.message || 'Failed to capture employee screenshot. Ensure the employee is currently clocked in.');
     } finally {
       setCapturingScreenshotRecordId(null);
     }
@@ -1349,18 +1198,24 @@ export const AttendanceLeavePage: React.FC = () => {
                               </td>
                               <td className="py-3.5 px-5 text-right">
                                 <div className="flex items-center justify-end gap-2">
-                                  {isActivelyClockedIn && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleTakeScreenshot(rec)}
-                                      disabled={capturingScreenshotRecordId === rec.id}
-                                      title={`Capture live screen of ${employeeName}`}
-                                      className="px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition bg-gradient-to-r from-orange-500 to-[#F95716] hover:from-orange-600 hover:to-[#e0480a] text-white shadow-xs cursor-pointer active:scale-95 disabled:opacity-75"
-                                    >
-                                      <Camera className={`w-3.5 h-3.5 ${capturingScreenshotRecordId === rec.id ? 'animate-spin' : ''}`} />
-                                      <span>{capturingScreenshotRecordId === rec.id ? 'Capturing...' : 'Take Screenshot'}</span>
-                                    </button>
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTakeScreenshot(rec)}
+                                    disabled={!isActivelyClockedIn || capturingScreenshotRecordId === rec.id}
+                                    title={
+                                      isActivelyClockedIn
+                                        ? `Capture live screen of ${employeeName}`
+                                        : 'Available after the employee clocks in'
+                                    }
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition ${
+                                      isActivelyClockedIn
+                                        ? 'bg-gradient-to-r from-orange-500 to-[#F95716] hover:from-orange-600 hover:to-[#e0480a] text-white shadow-xs cursor-pointer active:scale-95 disabled:opacity-75'
+                                        : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <Camera className={`w-3.5 h-3.5 ${capturingScreenshotRecordId === rec.id ? 'animate-spin' : ''}`} />
+                                    <span>{capturingScreenshotRecordId === rec.id ? 'Capturing...' : 'Take Screenshot'}</span>
+                                  </button>
 
                                   <button
                                     type="button"

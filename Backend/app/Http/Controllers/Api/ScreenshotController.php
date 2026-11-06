@@ -2,190 +2,79 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Helpers\StorageHelper;
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceRecord;
+use App\Models\CompanyMembership;
 use App\Models\Screenshot;
-use App\Helpers\StorageHelper;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 
+/**
+ * Admin-triggered employee screen capture.
+ *
+ * Flow (same model as the task-management desktop agent):
+ *  1. Admin clicks "Take Screenshot" -> requestScreenshot() queues a capture job for the employee.
+ *  2. The Finovo Desktop Tracker running on the employee's computer polls
+ *     employeeCheckRequest() every few seconds (identified by the X-Finovo-Client header).
+ *  3. The tracker captures the real screen natively (no browser share-screen prompt)
+ *     and uploads it to employeeSubmitScreenshot().
+ *  4. Admin polls checkScreenshotStatus() and receives the stored screenshot.
+ */
 class ScreenshotController extends Controller
 {
+    private const DESKTOP_CLIENT_HEADER = 'X-Finovo-Client';
+    private const DESKTOP_CLIENT_VALUE = 'desktop-tracker';
+
+    private const AGENT_HEARTBEAT_TTL_SECONDS = 15;
+    private const PENDING_REQUEST_TTL_SECONDS = 60;
+    private const JOB_TTL_SECONDS = 120;
+    private const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+    private const ACTIVE_STATUSES = ['present', 'late', 'clocked_in'];
+    private const MANAGER_ROLE_SLUGS = ['company-owner', 'company-admin', 'project-manager', 'hr-officer'];
+
     /**
-     * Store a screenshot for a given attendance record.
-     * Admin can only call this when the employee is currently clocked in.
+     * POST /attendance/{record}/screenshot
+     * Direct upload of an already captured image by an authorized manager.
      */
     public function store(Request $request, $param1 = null, $param2 = null): JsonResponse
     {
-        // Resolve AttendanceRecord safely from route parameters (supports scoped /companies/{company}/attendance/{record}/screenshot and /attendance/{record}/screenshot)
-        $recordTarget = $param2 ?? $param1 ?? $request->route('record');
-
-        if ($recordTarget instanceof AttendanceRecord) {
-            $record = $recordTarget;
-        } elseif (is_numeric($recordTarget) || is_string($recordTarget)) {
-            $record = AttendanceRecord::find($recordTarget);
-        } else {
-            $record = null;
-        }
-
+        $record = $this->resolveRecord($request, $param1, $param2);
         if (!$record) {
             return response()->json(['message' => 'Attendance record not found.'], 404);
         }
 
-        // 1. RBAC Authorization Check: Only administrators and authorized managers can capture employee screenshots
         $user = Auth::user();
         if (!$user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $membership = $request->attributes->get('currentMembership')
-            ?? \App\Models\CompanyMembership::where('company_id', $record->company_id)
-                ->where('user_id', $user->id)
-                ->first();
-
-        if (!$membership) {
-            return response()->json(['message' => 'Workspace membership required.'], 403);
-        }
-
-        $isAuthorized = $membership->hasPermission('attendance.manage')
-            || $membership->hasPermission('monitoring.policy.manage')
-            || $membership->hasPermission('attendance.view_team')
-            || $membership->roles()->whereIn('slug', ['company-owner', 'company-admin', 'project-manager', 'hr-officer'])->exists();
-
-        if (!$isAuthorized) {
+        if (!$this->canManageScreenshots($request, $record, $user)) {
             return response()->json([
-                'message' => 'Access Denied: Only administrators and authorized managers have permission to capture employee screenshots.',
+                'message' => 'Access Denied: Only administrators and authorized managers can capture employee screenshots.',
             ], 403);
         }
 
-        // 2. Must be actively clocked in (status 'present', 'late', or 'clocked_in' without clock out timestamp)
-        $isClockedIn = in_array($record->status, ['present', 'late', 'clocked_in']) && is_null($record->last_clock_out_at);
-        if (!$isClockedIn) {
+        if (!$this->isActivelyClockedIn($record)) {
             return response()->json([
                 'message' => 'Employee is not currently clocked in. Screenshots can only be captured during an active clock-in session.',
             ], 403);
         }
 
-        $image = null;
-        $isSvg = false;
-
-        if ($request->hasFile('image')) {
-            $image = file_get_contents($request->file('image')->getRealPath());
-        } elseif ($request->filled('image')) {
-            $raw = $request->input('image');
-            if (str_starts_with($raw, 'data:image')) {
-                $parts = explode(',', $raw);
-                $image = base64_decode(end($parts));
-            } else {
-                $image = base64_decode($raw);
-            }
-        } elseif (!empty($request->getContent())) {
-            $content = $request->getContent();
-            if (str_starts_with($content, 'data:image')) {
-                $parts = explode(',', $content);
-                $image = base64_decode(end($parts));
-            } else {
-                $image = $content;
-            }
+        $image = $this->decodeImage((string) $request->input('image', ''));
+        if ($image === null) {
+            return response()->json(['message' => 'A valid PNG or JPEG image is required.'], 422);
         }
 
-        $record->loadMissing(['membership.user', 'shift']);
-        $employeeName = $record->membership?->user?->name ?? 'Employee';
-        $shiftName = $record->shift?->name ?? 'Standard Shift';
-        $timeStr = now()->format('Y-m-d H:i:s T');
-        $timestamp = now()->timestamp;
-
-        if (empty($image)) {
-            // Generate clean workspace desktop capture snapshot
-            $isSvg = true;
-            $safeName = htmlspecialchars($employeeName, ENT_QUOTES, 'UTF-8');
-            $safeShift = htmlspecialchars($shiftName, ENT_QUOTES, 'UTF-8');
-            $image = <<<SVG
-<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#1e293b" />
-    </linearGradient>
-    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#f95716" />
-    </linearGradient>
-  </defs>
-  <rect width="1280" height="720" fill="url(#bgGrad)" />
-  <!-- App Title Bar -->
-  <rect x="40" y="30" width="1200" height="48" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <circle cx="65" cy="54" r="6" fill="#ef4444" />
-  <circle cx="85" cy="54" r="6" fill="#f59e0b" />
-  <circle cx="105" cy="54" r="6" fill="#10b981" />
-  <text x="135" y="59" fill="#cbd5e1" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="600">Finovo Enterprise WorkSession Monitor &#8226; Employee Screen Capture</text>
-  <rect x="1050" y="42" width="170" height="24" rx="6" fill="#059669" fill-opacity="0.25" stroke="#10b981" stroke-width="0.5"/>
-  <text x="1135" y="58" fill="#34d399" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">&#8226; CLOCKED IN &amp; ACTIVE</text>
-
-  <!-- Screen Content Area -->
-  <rect x="40" y="95" width="1200" height="585" rx="14" fill="#090d16" stroke="#334155" stroke-width="1"/>
-  
-  <!-- Left Side Telemetry Panel -->
-  <rect x="60" y="115" width="290" height="545" rx="10" fill="#1e293b" stroke="#334155" stroke-width="0.5"/>
-  <text x="80" y="150" fill="#f8fafc" font-family="sans-serif" font-size="15" font-weight="700">Employee Telemetry</text>
-  <text x="80" y="180" fill="#94a3b8" font-family="sans-serif" font-size="12">Name: <tspan fill="#f1f5f9" font-weight="600">{$safeName}</tspan></text>
-  <text x="80" y="205" fill="#94a3b8" font-family="sans-serif" font-size="12">Shift: <tspan fill="#f1f5f9">{$safeShift}</tspan></text>
-  <text x="80" y="230" fill="#94a3b8" font-family="sans-serif" font-size="12">Status: <tspan fill="#34d399" font-weight="600">Active Clock-In</tspan></text>
-  <text x="80" y="255" fill="#94a3b8" font-family="sans-serif" font-size="12">Record ID: <tspan fill="#94a3b8">#{$record->id}</tspan></text>
-  <text x="80" y="280" fill="#94a3b8" font-family="sans-serif" font-size="12">Captured: <tspan fill="#94a3b8">{$timeStr}</tspan></text>
-
-  <line x1="80" y1="300" x2="330" y2="300" stroke="#334155" stroke-width="1" />
-  <text x="80" y="325" fill="#f8fafc" font-family="sans-serif" font-size="13" font-weight="600">Active Window / Task</text>
-  <rect x="80" y="338" width="250" height="60" rx="8" fill="#0f172a" stroke="#334155" stroke-width="0.5"/>
-  <text x="95" y="362" fill="#38bdf8" font-family="sans-serif" font-size="12" font-weight="600">Finovo Project Workspace</text>
-  <text x="95" y="382" fill="#64748b" font-family="sans-serif" font-size="11">Time tracking in progress</text>
-
-  <!-- Main Canvas / Workplace Display -->
-  <rect x="370" y="115" width="850" height="545" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
-  <rect x="395" y="140" width="800" height="75" rx="8" fill="#1e293b"/>
-  <text x="420" y="175" fill="#f8fafc" font-family="sans-serif" font-size="17" font-weight="700">Finovo Platform &#8226; Operational Work Session</text>
-  <text x="420" y="198" fill="#38bdf8" font-family="sans-serif" font-size="12">Real-time screen capture authorized by Enterprise Administrator</text>
-
-  <!-- Interactive activity representation bars -->
-  <rect x="395" y="240" width="480" height="14" rx="4" fill="#334155" />
-  <rect x="395" y="265" width="650" height="14" rx="4" fill="#1e293b" />
-  <rect x="395" y="290" width="400" height="14" rx="4" fill="#334155" />
-  <rect x="395" y="315" width="560" height="14" rx="4" fill="#1e293b" />
-  <rect x="395" y="340" width="720" height="14" rx="4" fill="#334155" />
-  <rect x="395" y="365" width="310" height="14" rx="4" fill="#1e293b" />
-  <rect x="395" y="390" width="600" height="14" rx="4" fill="#334155" />
-  <rect x="395" y="415" width="520" height="14" rx="4" fill="#1e293b" />
-  <rect x="395" y="440" width="450" height="14" rx="4" fill="#334155" />
-
-  <!-- Verification Stamp -->
-  <rect x="800" y="580" width="400" height="60" rx="10" fill="url(#brandGrad)" fill-opacity="0.18" stroke="#f95716" stroke-width="1"/>
-  <text x="820" y="605" fill="#fb923c" font-family="sans-serif" font-size="13" font-weight="700">Finovo Live Attendance Capture</text>
-  <text x="820" y="625" fill="#94a3b8" font-family="sans-serif" font-size="11">Captured for {$safeName} &#8226; {$timeStr}</text>
-</svg>
-SVG;
-            $filename = 'screenshot_' . $record->id . '_' . $timestamp . '.svg';
-        } else {
-            $filename = 'screenshot_' . $record->id . '_' . $timestamp . '.png';
-        }
-
-        $adminId = Auth::id() ?? 1;
-
-        $url = StorageHelper::storeScreenshot($filename, $image, $record, $adminId);
-
-        $screenshot = Screenshot::create([
-            'attendance_record_id' => $record->id,
-            'admin_id'             => $adminId,
-            'url'                  => $url,
-            'stored_at'            => now(),
-        ]);
-
-        $screenshot->load('admin');
+        $screenshot = $this->persistScreenshot($record, $image['binary'], $image['extension'], $user->id);
 
         return response()->json([
             'message'    => 'Screenshot captured and stored successfully.',
-            'url'        => $url,
+            'url'        => $screenshot->url,
             'screenshot' => $screenshot,
             'record_id'  => $record->id,
             'stored_at'  => $screenshot->stored_at->toIso8601String(),
@@ -194,20 +83,11 @@ SVG;
 
     /**
      * POST /attendance/{record}/request-screenshot
-     * Admin initiates a remote capture request to the employee's active session.
+     * Admin queues a remote capture job for the employee's desktop tracker.
      */
     public function requestScreenshot(Request $request, $param1 = null, $param2 = null): JsonResponse
     {
-        $recordTarget = $param2 ?? $param1 ?? $request->route('record');
-
-        if ($recordTarget instanceof AttendanceRecord) {
-            $record = $recordTarget;
-        } elseif (is_numeric($recordTarget) || is_string($recordTarget)) {
-            $record = AttendanceRecord::find($recordTarget);
-        } else {
-            $record = null;
-        }
-
+        $record = $this->resolveRecord($request, $param1, $param2);
         if (!$record) {
             return response()->json(['message' => 'Attendance record not found.'], 404);
         }
@@ -217,28 +97,13 @@ SVG;
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $membership = $request->attributes->get('currentMembership')
-            ?? \App\Models\CompanyMembership::where('company_id', $record->company_id)
-                ->where('user_id', $user->id)
-                ->first();
-
-        if (!$membership) {
-            return response()->json(['message' => 'Workspace membership required.'], 403);
-        }
-
-        $isAuthorized = $membership->hasPermission('attendance.manage')
-            || $membership->hasPermission('monitoring.policy.manage')
-            || $membership->hasPermission('attendance.view_team')
-            || $membership->roles()->whereIn('slug', ['company-owner', 'company-admin', 'project-manager', 'hr-officer'])->exists();
-
-        if (!$isAuthorized) {
+        if (!$this->canManageScreenshots($request, $record, $user)) {
             return response()->json([
                 'message' => 'Access Denied: Only administrators have permission to capture employee screens.',
             ], 403);
         }
 
-        $isClockedIn = in_array($record->status, ['present', 'late', 'clocked_in']) && is_null($record->last_clock_out_at);
-        if (!$isClockedIn) {
+        if (!$this->isActivelyClockedIn($record)) {
             return response()->json([
                 'message' => 'Employee is not currently clocked in. Screenshots can only be captured during an active clock-in session.',
             ], 403);
@@ -246,127 +111,140 @@ SVG;
 
         $record->loadMissing('membership.user');
         $employeeUserId = $record->membership?->user_id;
+        $employeeName = $record->membership?->user?->name ?? 'Employee';
 
-        // Check if admin is capturing their own record on the current browser
-        if ($employeeUserId === $user->id) {
-            return response()->json([
-                'mode' => 'self_capture',
-                'record_id' => $record->id,
-                'message' => 'Self-capture mode active.',
-            ]);
+        if (!$employeeUserId) {
+            return response()->json(['message' => 'Employee account for this attendance record could not be resolved.'], 422);
         }
 
-        $requestId = 'req_' . bin2hex(random_bytes(8)) . '_' . time();
+        if (!$this->isDesktopAgentOnline($employeeUserId)) {
+            return response()->json([
+                'status'  => 'agent_offline',
+                'message' => "Finovo Desktop Tracker is not running on {$employeeName}'s computer. Ask the employee to open the tracker and sign in, then try again.",
+            ], 409);
+        }
 
-        // Queue pending request for employee's active session
-        Cache::put("pending_screen_req_user_{$employeeUserId}", [
-            'request_id' => $requestId,
-            'record_id' => $record->id,
-            'admin_id' => $user->id,
-            'admin_name' => $user->name,
+        $requestId = 'req_' . bin2hex(random_bytes(12));
+
+        Cache::put($this->pendingRequestKey($employeeUserId), [
+            'request_id'   => $requestId,
+            'record_id'    => $record->id,
+            'admin_id'     => $user->id,
             'requested_at' => now()->timestamp,
-        ], 60);
+        ], self::PENDING_REQUEST_TTL_SECONDS);
 
-        Cache::put("pending_screen_req_record_{$record->id}", [
-            'request_id' => $requestId,
-            'record_id' => $record->id,
-            'admin_id' => $user->id,
-            'requested_at' => now()->timestamp,
-        ], 60);
-
-        Cache::put("screen_job_{$requestId}", [
-            'status' => 'pending',
-            'record_id' => $record->id,
-            'admin_id' => $user->id,
+        Cache::put($this->jobKey($requestId), [
+            'status'           => 'pending',
+            'record_id'        => $record->id,
+            'admin_id'         => $user->id,
             'employee_user_id' => $employeeUserId,
-            'created_at' => now()->timestamp,
-        ], 90);
+            'created_at'       => now()->timestamp,
+        ], self::JOB_TTL_SECONDS);
 
         return response()->json([
-            'mode' => 'remote_dispatch',
-            'status' => 'pending',
-            'request_id' => $requestId,
-            'record_id' => $record->id,
-            'employee_name' => $record->membership?->user?->name ?? 'Employee',
-            'message' => 'Remote capture signal dispatched to employee active session.',
+            'mode'          => 'remote_dispatch',
+            'status'        => 'pending',
+            'request_id'    => $requestId,
+            'record_id'     => $record->id,
+            'employee_name' => $employeeName,
+            'message'       => 'Capture request sent to the employee\'s desktop tracker.',
         ]);
     }
 
     /**
      * GET /attendance/screenshot-status/{requestId}
-     * Admin polls to check if the remote employee session has uploaded the screenshot.
+     * Admin polls until the employee's desktop tracker has uploaded the capture.
      */
     public function checkScreenshotStatus(Request $request, $param1 = null, $param2 = null): JsonResponse
     {
         $requestId = $param2 ?? $param1 ?? $request->route('requestId') ?? $request->input('request_id');
-
-        if (!$requestId) {
+        if (!is_string($requestId) || $requestId === '') {
             return response()->json(['message' => 'Request ID is required.'], 400);
         }
 
-        $job = Cache::get("screen_job_{$requestId}");
-
+        $job = Cache::get($this->jobKey($requestId));
         if (!$job) {
             return response()->json([
-                'status' => 'expired',
-                'message' => 'Screenshot request expired or employee session was offline.',
+                'status'  => 'expired',
+                'message' => 'Screenshot request expired or the employee\'s desktop tracker went offline.',
             ], 404);
+        }
+
+        if ((int) ($job['admin_id'] ?? 0) !== (int) Auth::id()) {
+            return response()->json(['message' => 'This screenshot request belongs to another administrator.'], 403);
         }
 
         if ($job['status'] === 'fulfilled') {
             return response()->json([
-                'status' => 'fulfilled',
+                'status'     => 'fulfilled',
                 'screenshot' => $job['screenshot'],
-                'url' => $job['url'],
-                'record_id' => $job['record_id'],
+                'url'        => $job['url'],
+                'record_id'  => $job['record_id'],
+            ]);
+        }
+
+        if ($job['status'] === 'failed') {
+            return response()->json([
+                'status'  => 'failed',
+                'message' => $job['message'] ?? 'The desktop tracker could not capture the screen.',
             ]);
         }
 
         return response()->json([
-            'status' => 'pending',
+            'status'     => 'pending',
             'request_id' => $requestId,
         ]);
     }
 
     /**
-     * GET /attendance/employee/check-request
-     * Employee's active browser heartbeat checks if admin requested a screenshot.
+     * GET /attendance/employee/check-screenshot-request
+     *
+     * Desktop tracker (X-Finovo-Client: desktop-tracker): records a heartbeat and receives pending capture jobs.
+     * Web portal: only receives connection status so the employee can be reminded to open the tracker.
      */
     public function employeeCheckRequest(Request $request): JsonResponse
     {
         $user = Auth::user();
         if (!$user) {
-            return response()->json(['has_request' => false, 'is_clocked_in' => false]);
+            return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $pending = Cache::get("pending_screen_req_user_{$user->id}");
+        $isDesktopAgent = $request->header(self::DESKTOP_CLIENT_HEADER) === self::DESKTOP_CLIENT_VALUE;
+        if ($isDesktopAgent) {
+            Cache::put($this->agentHeartbeatKey($user->id), now()->timestamp, self::AGENT_HEARTBEAT_TTL_SECONDS);
+        }
 
-        $isClockedIn = AttendanceRecord::whereHas('membership', function ($q) use ($user) {
-            $q->where('user_id', $user->id);
+        $isClockedIn = AttendanceRecord::whereHas('membership', function ($query) use ($user) {
+            $query->where('user_id', $user->id);
         })
-        ->whereNotNull('first_clock_in_at')
-        ->whereNull('last_clock_out_at')
-        ->whereDate('work_date', now()->toDateString())
-        ->exists();
+            ->whereNotNull('first_clock_in_at')
+            ->whereNull('last_clock_out_at')
+            ->whereIn('status', self::ACTIVE_STATUSES)
+            ->exists();
 
-        if ($pending) {
-            return response()->json([
-                'has_request'   => true,
-                'request_id'    => $pending['request_id'],
-                'record_id'     => $pending['record_id'],
-                'is_clocked_in' => $isClockedIn,
-            ]);
+        $response = [
+            'has_request'     => false,
+            'is_clocked_in'   => $isClockedIn,
+            'agent_connected' => $isDesktopAgent || $this->isDesktopAgentOnline($user->id),
+        ];
+
+        if (!$isDesktopAgent) {
+            return response()->json($response);
         }
 
-        return response()->json([
-            'has_request'   => false,
-            'is_clocked_in' => $isClockedIn,
-        ]);
+        $pending = Cache::get($this->pendingRequestKey($user->id));
+        if ($pending && $isClockedIn) {
+            $response['has_request'] = true;
+            $response['request_id'] = $pending['request_id'];
+            $response['record_id'] = $pending['record_id'];
+        }
+
+        return response()->json($response);
     }
 
     /**
      * POST /attendance/employee/submit-screenshot
-     * Employee's active browser silently uploads the captured screen.
+     * Desktop tracker uploads the natively captured screen for a pending admin request.
      */
     public function employeeSubmitScreenshot(Request $request): JsonResponse
     {
@@ -375,33 +253,146 @@ SVG;
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $requestId = $request->input('request_id');
-        $recordId = $request->input('record_id');
-        $rawImage = $request->input('image');
+        $requestId = (string) $request->input('request_id', '');
+        $recordId = (int) $request->input('record_id', 0);
 
-        if (empty($rawImage) || empty($recordId)) {
-            return response()->json(['message' => 'Image and record ID are required.'], 422);
+        if ($requestId === '' || $recordId <= 0) {
+            return response()->json(['message' => 'Request ID and record ID are required.'], 422);
         }
 
-        $record = AttendanceRecord::find($recordId);
-        if (!$record) {
+        $job = Cache::get($this->jobKey($requestId));
+        if (!$job || $job['status'] !== 'pending') {
+            return response()->json(['message' => 'Screenshot request expired or was already fulfilled.'], 410);
+        }
+
+        if ((int) $job['employee_user_id'] !== (int) $user->id || (int) $job['record_id'] !== $recordId) {
+            return response()->json(['message' => 'This screenshot request does not belong to your session.'], 403);
+        }
+
+        $record = AttendanceRecord::with('membership')->find($recordId);
+        if (!$record || (int) $record->membership?->user_id !== (int) $user->id) {
             return response()->json(['message' => 'Attendance record not found.'], 404);
         }
 
-        // Decode base64 image
-        if (str_starts_with($rawImage, 'data:image')) {
-            $parts = explode(',', $rawImage);
-            $imageBinary = base64_decode(end($parts));
-        } else {
-            $imageBinary = base64_decode($rawImage);
+        $image = $this->decodeImage((string) $request->input('image', ''));
+        if ($image === null) {
+            Cache::put($this->jobKey($requestId), array_merge($job, [
+                'status'  => 'failed',
+                'message' => 'The desktop tracker sent an invalid image.',
+            ]), self::JOB_TTL_SECONDS);
+            Cache::forget($this->pendingRequestKey($user->id));
+
+            return response()->json(['message' => 'A valid PNG or JPEG image is required.'], 422);
         }
 
-        $job = $requestId ? Cache::get("screen_job_{$requestId}") : null;
-        $adminId = $job['admin_id'] ?? 10;
-        $timestamp = now()->timestamp;
-        $filename = 'screenshot_' . $record->id . '_' . $timestamp . '.png';
+        $adminId = (int) $job['admin_id'];
+        $screenshot = $this->persistScreenshot($record, $image['binary'], $image['extension'], $adminId);
 
-        $url = StorageHelper::storeScreenshot($filename, $imageBinary, $record, $adminId);
+        Cache::put($this->jobKey($requestId), [
+            'status'           => 'fulfilled',
+            'screenshot'       => $screenshot->toArray(),
+            'url'              => $screenshot->url,
+            'record_id'        => $record->id,
+            'admin_id'         => $adminId,
+            'employee_user_id' => $user->id,
+        ], self::JOB_TTL_SECONDS);
+
+        Cache::forget($this->pendingRequestKey($user->id));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Screen submitted successfully.',
+            'url'     => $screenshot->url,
+        ]);
+    }
+
+    private function resolveRecord(Request $request, $param1, $param2): ?AttendanceRecord
+    {
+        $target = $param2 ?? $param1 ?? $request->route('record');
+
+        if ($target instanceof AttendanceRecord) {
+            return $target;
+        }
+
+        if (is_numeric($target)) {
+            return AttendanceRecord::find((int) $target);
+        }
+
+        return null;
+    }
+
+    private function canManageScreenshots(Request $request, AttendanceRecord $record, User $user): bool
+    {
+        $membership = $request->attributes->get('currentMembership');
+
+        if (!$membership || (int) $membership->company_id !== (int) $record->company_id) {
+            $membership = CompanyMembership::where('company_id', $record->company_id)
+                ->where('user_id', $user->id)
+                ->where('status', 'active')
+                ->first();
+        }
+
+        if (!$membership) {
+            return false;
+        }
+
+        return $membership->hasPermission('attendance.manage')
+            || $membership->hasPermission('monitoring.policy.manage')
+            || $membership->hasPermission('attendance.view_team')
+            || $membership->roles()->whereIn('slug', self::MANAGER_ROLE_SLUGS)->exists();
+    }
+
+    private function isActivelyClockedIn(AttendanceRecord $record): bool
+    {
+        return !empty($record->first_clock_in_at)
+            && is_null($record->last_clock_out_at)
+            && in_array($record->status, self::ACTIVE_STATUSES, true);
+    }
+
+    private function isDesktopAgentOnline(int $userId): bool
+    {
+        return Cache::has($this->agentHeartbeatKey($userId));
+    }
+
+    /**
+     * Decodes a base64 / data-URL image and verifies it is a real PNG or JPEG.
+     *
+     * @return array{binary: string, extension: string}|null
+     */
+    private function decodeImage(string $raw): ?array
+    {
+        if ($raw === '') {
+            return null;
+        }
+
+        if (str_starts_with($raw, 'data:image')) {
+            $commaPosition = strpos($raw, ',');
+            $raw = $commaPosition === false ? '' : substr($raw, $commaPosition + 1);
+        }
+
+        $binary = base64_decode($raw, true);
+        if ($binary === false || $binary === '' || strlen($binary) > self::MAX_IMAGE_BYTES) {
+            return null;
+        }
+
+        $info = @getimagesizefromstring($binary);
+        if ($info === false) {
+            return null;
+        }
+
+        $extension = match ($info['mime'] ?? '') {
+            'image/png'  => 'png',
+            'image/jpeg' => 'jpg',
+            default      => null,
+        };
+
+        return $extension === null ? null : ['binary' => $binary, 'extension' => $extension];
+    }
+
+    private function persistScreenshot(AttendanceRecord $record, string $binary, string $extension, int $adminId): Screenshot
+    {
+        $filename = sprintf('screenshot_%d_%s_%s.%s', $record->id, now()->format('YmdHis'), bin2hex(random_bytes(4)), $extension);
+        $url = StorageHelper::storeScreenshot($filename, $binary, $record, $adminId);
 
         $screenshot = Screenshot::create([
             'attendance_record_id' => $record->id,
@@ -410,25 +401,21 @@ SVG;
             'stored_at'            => now(),
         ]);
 
-        $screenshot->load('admin');
+        return $screenshot->load('admin');
+    }
 
-        // Fulfill job cache so Admin's polling receives it immediately
-        if ($requestId) {
-            Cache::put("screen_job_{$requestId}", [
-                'status' => 'fulfilled',
-                'screenshot' => $screenshot,
-                'url' => $url,
-                'record_id' => $record->id,
-            ], 120);
-        }
+    private function pendingRequestKey(int $userId): string
+    {
+        return "pending_screen_req_user_{$userId}";
+    }
 
-        Cache::forget("pending_screen_req_user_{$user->id}");
-        Cache::forget("pending_screen_req_record_{$record->id}");
+    private function jobKey(string $requestId): string
+    {
+        return "screen_job_{$requestId}";
+    }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Screen submitted successfully.',
-            'url' => $url,
-        ], 200);
+    private function agentHeartbeatKey(int $userId): string
+    {
+        return "screen_agent_heartbeat_user_{$userId}";
     }
 }

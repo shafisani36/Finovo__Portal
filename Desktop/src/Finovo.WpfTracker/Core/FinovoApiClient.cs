@@ -54,8 +54,17 @@ namespace FinovoTracker.Core
         public int DurationSeconds { get; set; }
     }
 
+    public class ScreenCaptureRequestDto
+    {
+        public string RequestId { get; set; }
+        public long RecordId { get; set; }
+    }
+
     public class FinovoApiClient
     {
+        private const string ClientHeaderName = "X-Finovo-Client";
+        private const string ClientHeaderValue = "desktop-tracker";
+
         private string _baseUrl;
         private string _bearerToken;
         private readonly JavaScriptSerializer _serializer;
@@ -75,7 +84,7 @@ namespace FinovoTracker.Core
         public FinovoApiClient(string baseUrl = "http://127.0.0.1:8000")
         {
             BaseUrl = baseUrl;
-            _serializer = new JavaScriptSerializer();
+            _serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
             try
             {
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
@@ -401,6 +410,49 @@ namespace FinovoTracker.Core
             }
         }
 
+        /// <summary>
+        /// Heartbeat + poll for a pending administrator screenshot request.
+        /// Returns null when there is nothing to capture.
+        /// </summary>
+        public ScreenCaptureRequestDto CheckScreenCaptureRequest()
+        {
+            string url = _baseUrl + "/api/v1/attendance/employee/check-screenshot-request";
+            string json = SendRequest("GET", url, null, _bearerToken);
+            var root = _serializer.Deserialize<Dictionary<string, object>>(json);
+
+            if (root == null || !root.ContainsKey("has_request") || !Convert.ToBoolean(root["has_request"]))
+            {
+                return null;
+            }
+
+            if (!root.ContainsKey("request_id") || root["request_id"] == null || !root.ContainsKey("record_id") || root["record_id"] == null)
+            {
+                return null;
+            }
+
+            return new ScreenCaptureRequestDto
+            {
+                RequestId = root["request_id"].ToString(),
+                RecordId = Convert.ToInt64(root["record_id"])
+            };
+        }
+
+        /// <summary>
+        /// Uploads a natively captured JPEG screenshot for a pending administrator request.
+        /// </summary>
+        public void SubmitScreenCapture(ScreenCaptureRequestDto request, byte[] jpegBytes)
+        {
+            string url = _baseUrl + "/api/v1/attendance/employee/submit-screenshot";
+            var payload = new Dictionary<string, object>
+            {
+                { "request_id", request.RequestId },
+                { "record_id", request.RecordId },
+                { "image", "data:image/jpeg;base64," + Convert.ToBase64String(jpegBytes) }
+            };
+
+            SendRequest("POST", url, payload, _bearerToken, 60000);
+        }
+
         private TrackingSessionDto ParseSession(Dictionary<string, object> s)
         {
             if (s == null) return null;
@@ -441,13 +493,15 @@ namespace FinovoTracker.Core
             return dto;
         }
 
-        private string SendRequest(string method, string url, object payload, string token)
+        private string SendRequest(string method, string url, object payload, string token, int timeoutMilliseconds = 12000)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = method;
             req.ContentType = "application/json";
             req.Accept = "application/json";
-            req.Timeout = 12000;
+            req.Timeout = timeoutMilliseconds;
+            req.ReadWriteTimeout = timeoutMilliseconds;
+            req.Headers[ClientHeaderName] = ClientHeaderValue;
 
             if (!string.IsNullOrEmpty(token)) req.Headers["Authorization"] = "Bearer " + token;
 

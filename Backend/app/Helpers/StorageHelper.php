@@ -75,7 +75,11 @@ class StorageHelper
                 $record->loadMissing(['membership.user']);
                 $employeeName = $record->membership?->user?->name ?? 'Employee';
                 $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION) ?: 'png');
-                $mime = $ext === 'svg' ? 'image/svg+xml' : 'image/png';
+                $mime = match ($ext) {
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'svg'         => 'image/svg+xml',
+                    default       => 'image/png',
+                };
                 $timeFormatted = now()->format('Y-m-d H:i:s');
                 $originalTitle = "Screen Capture - {$employeeName} ({$timeFormatted})";
 

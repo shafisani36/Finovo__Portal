@@ -1,11 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using FinovoTracker.Core;
+using Drawing = System.Drawing;
+using DrawingImaging = System.Drawing.Imaging;
+using Forms = System.Windows.Forms;
 
 namespace FinovoTracker.Views
 {
@@ -17,6 +22,12 @@ namespace FinovoTracker.Views
 
         private DispatcherTimer _secondTimer;
         private DispatcherTimer _syncTimer;
+
+        private const int ScreenCapturePollIntervalMs = 3000;
+        private const long ScreenCaptureJpegQuality = 80L;
+        private FinovoApiClient _screenCaptureApiClient;
+        private System.Threading.Timer _screenCaptureTimer;
+        private int _isScreenCaptureBusy;
 
         private string _activeMode = "task"; // "task", "research", "learning"
         private bool _isTracking = false;
@@ -39,6 +50,7 @@ namespace FinovoTracker.Views
             SetupLifecycleHooks();
             LoadProjectsAndState();
             StartTimers();
+            StartScreenCaptureAgent();
         }
 
         private void SetupProfileUi()
@@ -222,6 +234,109 @@ namespace FinovoTracker.Views
             _syncTimer.Start();
         }
 
+        /// <summary>
+        /// Answers administrator screenshot requests in the background.
+        /// Runs on a thread-pool timer with its own API client so the UI thread is never blocked.
+        /// </summary>
+        private void StartScreenCaptureAgent()
+        {
+            _screenCaptureApiClient = new FinovoApiClient(_apiClient.BaseUrl) { BearerToken = _apiClient.BearerToken };
+            _screenCaptureTimer = new System.Threading.Timer(OnScreenCaptureTick, null, 0, ScreenCapturePollIntervalMs);
+        }
+
+        private void StopScreenCaptureAgent()
+        {
+            if (_screenCaptureTimer != null)
+            {
+                _screenCaptureTimer.Dispose();
+                _screenCaptureTimer = null;
+            }
+        }
+
+        private void OnScreenCaptureTick(object state)
+        {
+            if (Interlocked.Exchange(ref _isScreenCaptureBusy, 1) == 1) return;
+
+            try
+            {
+                ScreenCaptureRequestDto request;
+                try
+                {
+                    request = _screenCaptureApiClient.CheckScreenCaptureRequest();
+                }
+                catch
+                {
+                    // Backend unreachable or token expired: retry on the next tick.
+                    return;
+                }
+
+                if (request == null) return;
+
+                try
+                {
+                    byte[] jpegBytes = CaptureVirtualScreenAsJpeg();
+                    _screenCaptureApiClient.SubmitScreenCapture(request, jpegBytes);
+                }
+                catch (Exception ex)
+                {
+                    WriteScreenCaptureLog(ex);
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isScreenCaptureBusy, 0);
+            }
+        }
+
+        /// <summary>
+        /// Captures every connected monitor (the full virtual desktop) and encodes it as JPEG.
+        /// </summary>
+        private static byte[] CaptureVirtualScreenAsJpeg()
+        {
+            Drawing.Rectangle bounds = Forms.SystemInformation.VirtualScreen;
+
+            using (var bitmap = new Drawing.Bitmap(bounds.Width, bounds.Height, DrawingImaging.PixelFormat.Format24bppRgb))
+            {
+                using (var graphics = Drawing.Graphics.FromImage(bitmap))
+                {
+                    graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, Drawing.CopyPixelOperation.SourceCopy);
+                }
+
+                using (var stream = new MemoryStream())
+                {
+                    DrawingImaging.ImageCodecInfo jpegEncoder = Array.Find(
+                        DrawingImaging.ImageCodecInfo.GetImageEncoders(),
+                        codec => codec.FormatID == DrawingImaging.ImageFormat.Jpeg.Guid);
+
+                    if (jpegEncoder == null)
+                    {
+                        bitmap.Save(stream, DrawingImaging.ImageFormat.Jpeg);
+                    }
+                    else
+                    {
+                        using (var encoderParameters = new DrawingImaging.EncoderParameters(1))
+                        {
+                            encoderParameters.Param[0] = new DrawingImaging.EncoderParameter(DrawingImaging.Encoder.Quality, ScreenCaptureJpegQuality);
+                            bitmap.Save(stream, jpegEncoder, encoderParameters);
+                        }
+                    }
+
+                    return stream.ToArray();
+                }
+            }
+        }
+
+        private static void WriteScreenCaptureLog(Exception ex)
+        {
+            try
+            {
+                string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Finovo", "TimeTracker");
+                if (!Directory.Exists(directory)) Directory.CreateDirectory(directory);
+                File.AppendAllText(Path.Combine(directory, "screen_capture.log"), string.Format("[{0:O}] {1}{2}", DateTime.UtcNow, ex, Environment.NewLine));
+            }
+            catch { }
+        }
+
         private void OnStartTrackingClicked(object sender, RoutedEventArgs e)
         {
             if (!_isTracking)
@@ -355,6 +470,7 @@ namespace FinovoTracker.Views
             if (MessageBox.Show("Are you sure you want to sign out of Finovo Global Enterprise?", "Sign Out", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 if (_isTracking) StopTracking();
+                StopScreenCaptureAgent();
                 WindowsProtectedStorage.ClearSession();
                 var login = new LoginWindow(_apiClient);
                 login.Show();
@@ -364,6 +480,7 @@ namespace FinovoTracker.Views
 
         protected override void OnClosed(EventArgs e)
         {
+            StopScreenCaptureAgent();
             _lifecycleManager.Dispose();
             base.OnClosed(e);
         }
