@@ -152,7 +152,11 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         $user = $request->user();
-        $user->load(['memberships.company', 'memberships.roles.permissions']);
+        $user->load(['memberships.company', 'memberships.roles.permissions', 'memberships.employeeProfile']);
+
+        foreach ($user->memberships as $membership) {
+            $membership->ensureCreatorRoles();
+        }
 
         return response()->json([
             'user' => $this->formatSafeUser($user),

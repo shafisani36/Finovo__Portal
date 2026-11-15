@@ -46,6 +46,8 @@ class EnsureCompanyMembership
             return response()->json(['message' => 'Access denied. You are not an active member of this workspace.'], 403);
         }
 
+        $membership->ensureCreatorRoles();
+
         $request->attributes->set('currentCompany', $company);
         $request->attributes->set('currentMembership', $membership);
 

@@ -82,11 +82,66 @@ class CompanyMembership extends Model
 
     public function hasRole(string|array $roleSlug): bool
     {
+        if ($this->roles->isEmpty()) {
+            $this->ensureCreatorRoles();
+        }
+
         if (is_array($roleSlug)) {
             return $this->roles->contains(fn (Role $r) => in_array($r->slug, $roleSlug));
         }
 
         return $this->roles->contains('slug', $roleSlug);
+    }
+
+    /**
+     * Self-heals and auto-bootstraps company-owner and company-admin roles
+     * for workspace creators or when no member has administrative roles.
+     */
+    public function ensureCreatorRoles(): void
+    {
+        if ($this->roles->isNotEmpty()) {
+            return;
+        }
+
+        $isFirstMember = ! static::where('company_id', $this->company_id)
+            ->where('id', '<', $this->id)
+            ->exists();
+        $isFounder = $this->employeeProfile?->designation === 'Founder & Owner';
+        $hasAnyRoleInCompany = static::where('company_id', $this->company_id)
+            ->whereHas('roles')
+            ->exists();
+
+        if ($isFirstMember || $isFounder || ! $hasAnyRoleInCompany) {
+            $ownerRole = Role::firstOrCreate(
+                ['slug' => 'company-owner', 'company_id' => null],
+                ['name' => 'Company Owner', 'description' => 'Full administrative access and company ownership', 'is_system' => true]
+            );
+            $adminRole = Role::firstOrCreate(
+                ['slug' => 'company-admin', 'company_id' => null],
+                ['name' => 'Company Administrator', 'description' => 'Administrative control across organizational features', 'is_system' => true]
+            );
+
+            if (Permission::count() === 0) {
+                try {
+                    $seeder = new \Database\Seeders\RoleAndPermissionSeeder();
+                    $seeder->run();
+                    $ownerRole->refresh();
+                    $adminRole->refresh();
+                } catch (\Throwable $e) {
+                }
+            } else {
+                $allPerms = Permission::pluck('id');
+                if ($ownerRole->permissions()->count() === 0) {
+                    $ownerRole->permissions()->sync($allPerms);
+                }
+                if ($adminRole->permissions()->count() === 0) {
+                    $adminRole->permissions()->sync($allPerms);
+                }
+            }
+
+            $this->roles()->syncWithoutDetaching([$ownerRole->id, $adminRole->id]);
+            $this->load(['roles.permissions', 'employeeProfile']);
+        }
     }
 
     /**
