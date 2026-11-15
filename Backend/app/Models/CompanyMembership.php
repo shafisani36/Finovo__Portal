@@ -118,8 +118,8 @@ class CompanyMembership extends Model
             return false;
         }
 
-        // Owner role has implicit superuser permission within the company (unless explicitly restricted above)
-        if ($this->hasRole('company-owner')) {
+        // Owner and Company Admin roles have implicit superuser permission within the company (unless explicitly restricted above)
+        if ($this->hasRole(['company-owner', 'company-admin'])) {
             return true;
         }
 
@@ -167,7 +167,7 @@ class CompanyMembership extends Model
             return false;
         }
 
-        if ($this->hasRole('company-owner')) {
+        if ($this->hasRole(['company-owner', 'company-admin'])) {
             return true;
         }
 

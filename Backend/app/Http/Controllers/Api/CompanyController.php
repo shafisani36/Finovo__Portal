@@ -53,10 +53,30 @@ class CompanyController extends Controller
                 'joined_at' => now(),
             ]);
 
-            $ownerRole = Role::where('slug', 'company-owner')->first();
-            if ($ownerRole) {
-                $membership->roles()->attach($ownerRole->id);
+            // Ensure owner and admin system roles exist
+            $ownerRole = Role::firstOrCreate(
+                ['slug' => 'company-owner', 'company_id' => null],
+                ['name' => 'Company Owner', 'description' => 'Full administrative access and company ownership', 'is_system' => true]
+            );
+
+            $adminRole = Role::firstOrCreate(
+                ['slug' => 'company-admin', 'company_id' => null],
+                ['name' => 'Company Administrator', 'description' => 'Administrative control across organizational features', 'is_system' => true]
+            );
+
+            // Ensure system permissions exist and are attached to owner & admin
+            $allPermissions = Permission::pluck('id');
+            if ($allPermissions->isNotEmpty()) {
+                if ($ownerRole->permissions()->count() === 0) {
+                    $ownerRole->permissions()->sync($allPermissions);
+                }
+                if ($adminRole->permissions()->count() === 0) {
+                    $adminRole->permissions()->sync($allPermissions);
+                }
             }
+
+            // Grant both owner and company-admin roles to workspace creator
+            $membership->roles()->syncWithoutDetaching([$ownerRole->id, $adminRole->id]);
 
             CompanySettings::create([
                 'company_id' => $company->id,
